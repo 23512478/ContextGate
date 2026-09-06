@@ -27,4 +27,10 @@ public class OrderController {
     public List<Map<String, Object>> listMy(@RequestParam Long userId) {
         return orderService.listMyOrders(userId);
     }
+
+    /** Wrapper 动态查询入口：调用链应显示 MP Wrapper 合成 SQL。 */
+    @GetMapping("/orders/search")
+    public List<Order> search(@RequestParam String keyword) {
+        return orderService.searchByTitle(keyword);
+    }
 }

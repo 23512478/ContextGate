@@ -334,6 +334,208 @@ def parse_xml_mappers(resources_dir, table_to_entity, entity_by_simple):
     return out
 
 
+# ---------------------------------------------------------------- 内嵌 SQL：JdbcTemplate 裸 SQL + MP Wrapper 动态 SQL
+
+# jdbcTemplate.xxx(  / namedParameterJdbcTemplate.xxx( 这类变量名带 jdbc 的调用
+_JDBC_CALL_RE = re.compile(
+    r"\b\w*jdbc\w*\s*\.\s*(queryForList|queryForMap|queryForObject|query|update|batchUpdate|execute)\s*\(",
+    re.IGNORECASE)
+# 方法内局部 String 变量：String sql = "..." + "..."（JdbcTemplate 常用变量传 SQL）
+_LOCAL_STR_RE = re.compile(
+    r"(?:[;{}]\s*|^\s*)(?:final\s+)?String\s+(\w+)\s*=\s*((?:\"(?:[^\"\\]|\\.)*\"\s*(?:\+\s*)?)+)",
+    re.MULTILINE)
+# new LambdaQueryWrapper<User>( / new QueryWrapper<User>(
+_WRAPPER_NEW_RE = re.compile(
+    r"new\s+(LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)\s*<\s*(\w+)\s*>\s*\(")
+# IService 的 .lambdaQuery() / .lambdaUpdate()
+_LAMBDA_ENTRY_RE = re.compile(r"\.\s*(lambdaQuery|lambdaUpdate)\s*\(")
+# 条件链上的动词：.eq( / .like( / .orderByDesc( / .set( ...
+_VERBS_WHERE = {"eq", "ne", "gt", "lt", "ge", "le", "like", "likeright", "likeleft",
+                "in", "notin", "between", "orderbyasc", "orderbydesc", "groupby"}
+_VERB_SET = {"set"}
+_VERB_SELECT = {"select"}
+
+
+def _leading_concat_strings(s, start):
+    """从 s[start] 开始，提取开头那段「字符串字面量 + 号拼接」拼成的完整字符串。
+    遇到第一个不是字符串/加号/空白的东西就停（说明 SQL 是变量传参，静态拿不到）。"""
+    i, n, parts = start, len(s), []
+    while True:
+        mt = re.match(r'\s*"((?:[^"\\]|\\.)*)"', s[i:])
+        if not mt:
+            mt = re.match(r"\s*\"\"\"(.*?)\"\"\"", s[i:], re.S)  # 文本块
+            if not mt:
+                break
+        parts.append(mt.group(1))
+        i += mt.end()
+        m2 = re.match(r"\s*\+\s*", s[i:])
+        if not m2:
+            break
+        i += m2.end()
+    if not parts:
+        return None
+    sql = " ".join(parts)
+    return re.sub(r"\s+", " ", sql.replace(r"\n", " ").replace(r'\"', '"')
+                  .replace(r"\'", "'")).strip()
+
+
+def _enclosing_verb(region, pos):
+    """从 region[pos]（方法引用 X::getY 处）往左找包裹它的最近一个链动词：.verb( ..."""
+    depth, i = 0, pos - 1
+    while i >= 0:
+        ch = region[i]
+        if ch == ")":
+            depth += 1
+        elif ch == "(":
+            if depth == 0:
+                vm = re.search(r"\.(\w+)\s*$", region[:i])
+                return vm.group(1).lower() if vm else None
+            depth -= 1
+        elif ch == ";" and depth == 0:
+            return None
+        i -= 1
+    return None
+
+
+def _stmt_to_semicolon(text, start):
+    """从 start 取到语句结束（分号），限定在当前方法体内。"""
+    end = text.find(";", start)
+    return text[start:end if end >= 0 else len(text)]
+
+
+def scan_inline_sql(classes, by_simple, table_to_entity):
+    """扫所有方法体里的两类「不走 Mapper 接口」的 SQL：
+      1. JdbcTemplate 裸 SQL：jdbcTemplate.update("INSERT ...") / queryForList("SELECT ...")
+      2. MP Wrapper 动态链：new LambdaQueryWrapper<User>().eq(User::getName, ...) / lambdaQuery()...
+    返回记录列表，字段：owner / via / kind / text / tables / columns。
+    in_tx / routes 由主流程补。"""
+    out = []
+    ent_by_simple = {n: c for n, c in by_simple.items() if c.get("is_entity")}
+    # ServiceImpl<XxxMapper, Entity> 的类 → Entity（lambdaQuery() 不带泛型时靠它）
+    service_entity = {}
+    for c in classes.values():
+        sm = re.search(r"ServiceImpl<\s*(\w+)\s*,\s*(\w+)\s*>", c["extends"])
+        if sm:
+            service_entity[c["name"]] = sm.group(2)
+
+    for c in classes.values():
+        for meth in c["methods"]:
+            body = meth.get("body_raw") or ""
+            if not body:
+                continue
+            owner = f"{c['name']}#{meth['name']}"
+
+            # 局部 String 变量名 -> SQL 文本（String sql = "..." + "..."; 这种写法）
+            local_str = {}
+            for lm in _LOCAL_STR_RE.finditer(body):
+                start = body.index(lm.group(2).lstrip(), lm.start())
+                txt = _leading_concat_strings(body, start)
+                if txt:
+                    local_str[lm.group(1)] = txt
+
+            # ---- 1) JdbcTemplate 裸 SQL ----
+            for jm in _JDBC_CALL_RE.finditer(body):
+                api = jm.group(1).lower()
+                sql = _leading_concat_strings(body, jm.end())
+                if not sql:
+                    # 首参是变量：找局部 String 变量定义
+                    arg_m = re.match(r"\s*(\w+)\b", body[jm.end():])
+                    if arg_m and arg_m.group(1) in local_str:
+                        sql = local_str[arg_m.group(1)]
+                if not sql or not re.search(r"\b(select|insert|update|delete|create|alter|drop)\b",
+                                            sql, re.IGNORECASE):
+                    continue
+                first = re.match(r"\s*(\w+)", sql).group(1).upper()
+                if api.startswith("query"):
+                    kind = "SELECT"
+                elif api in ("update", "batchupdate"):
+                    kind = first if first in ("INSERT", "UPDATE", "DELETE") else "UPDATE"
+                else:  # execute：看 SQL 首词
+                    kind = first if first in ("SELECT", "INSERT", "UPDATE", "DELETE",
+                                              "CREATE", "ALTER", "DROP") else "SELECT"
+                tables = list(dict.fromkeys(t.lower() for t in SQL_TABLE_RE.findall(sql)))
+                cols = resolve_sql_columns(sql, tables, table_to_entity)
+                out.append({"owner": owner, "via": "jdbc-template", "kind": kind,
+                            "text": sql, "tables": tables, "columns": sorted(set(cols))})
+
+            # ---- 2) MP Wrapper 动态链 ----
+            # 2a) new XxxWrapper<Entity>( ... 链到分号
+            for wm in _WRAPPER_NEW_RE.finditer(body):
+                wtype, ent_name = wm.group(1), wm.group(2)
+                rec = _wrapper_record(owner, _stmt_to_semicolon(body, wm.start()),
+                                      wtype, ent_name, ent_by_simple, table_to_entity)
+                if rec:
+                    out.append(rec)
+            # 2b) .lambdaQuery() / .lambdaUpdate()（ServiceImpl 里，实体从 ServiceImpl 泛型拿）
+            for lm in _LAMBDA_ENTRY_RE.finditer(body):
+                ent_name = service_entity.get(c["name"])
+                if not ent_name:
+                    continue
+                wtype = "LambdaUpdateWrapper" if lm.group(1) == "lambdaUpdate" else "LambdaQueryWrapper"
+                rec = _wrapper_record(owner, _stmt_to_semicolon(body, lm.start()),
+                                      wtype, ent_name, ent_by_simple, table_to_entity)
+                if rec:
+                    out.append(rec)
+    return out
+
+
+def _wrapper_record(owner, region, wtype, ent_name, ent_by_simple, table_to_entity):
+    """把一段 Wrapper 链文本转成合成 SQL 记录。
+    Entity::getXxx 方法引用 → 实体字段 → 列名；链动词决定列是 WHERE / SET / SELECT 子句。"""
+    ent_obj = ent_by_simple.get(ent_name)
+    if not ent_obj or not ent_obj.get("entity_columns"):
+        return None
+    table = ent_obj["table_name"]
+    ecols = ent_obj["entity_columns"]  # field -> column
+
+    where_cols, set_cols, select_cols, order_cols = [], [], [], []
+    for rm in re.finditer(r"(\w+)\s*::\s*get(\w+)", region):
+        ref_type, getter = rm.group(1), rm.group(2)
+        if ref_type != ent_name:
+            continue  # 别的实体的方法引用（如联表 DTO），不碰本表
+        field = getter[0].lower() + getter[1:] if getter else ""
+        col = ecols.get(field)
+        if not col:
+            continue
+        verb = _enclosing_verb(region, rm.start()) or "eq"
+        if verb in _VERB_SET:
+            set_cols.append(col)
+        elif verb in _VERB_SELECT:
+            select_cols.append(col)
+        elif verb.startswith("orderby") or verb == "groupby":
+            order_cols.append(col)
+        else:
+            where_cols.append(col)  # eq/like/in 等条件列
+
+    is_update = "UpdateWrapper" in wtype or bool(set_cols) or re.search(r"\.\s*update\s*\(", region)
+    is_delete = not is_update and re.search(r"\.\s*(remove|delete)\s*\(", region)
+    if is_update:
+        kind = "UPDATE"
+        set_clause = ", ".join(f"{c} = ?" for c in dict.fromkeys(set_cols)) or "?"
+        where_clause = " AND ".join(f"{c} = ?" for c in dict.fromkeys(where_cols))
+        text = f"UPDATE {table} SET {set_clause}" + (f" WHERE {where_clause}" if where_clause else "")
+    elif is_delete:
+        kind = "DELETE"
+        where_clause = " AND ".join(f"{c} = ?" for c in dict.fromkeys(where_cols))
+        text = f"DELETE FROM {table}" + (f" WHERE {where_clause}" if where_clause else "")
+    else:
+        kind = "SELECT"
+        if select_cols:
+            sel = ", ".join(dict.fromkeys(select_cols + where_cols + order_cols))
+            text = f"SELECT {sel} FROM {table}"
+        else:
+            text = f"SELECT * FROM {table}"  # 无显式 select：MP 查整行，等同全列
+        where_clause = " AND ".join(f"{c} = ?" for c in dict.fromkeys(where_cols))
+        if where_clause:
+            text += f" WHERE {where_clause}"
+        if order_cols:
+            text += " ORDER BY " + ", ".join(dict.fromkeys(order_cols))
+    cols = resolve_sql_columns(text, [table], table_to_entity)
+    return {"owner": owner, "via": "mp-wrapper", "kind": kind,
+            "text": re.sub(r"\s+", " ", text).strip(),
+            "tables": [table], "columns": sorted(set(cols))}
+
+
 # SQL 里 FROM/JOIN 后面紧跟的词如果是这些关键字，说明那张表没起别名
 _SQL_KEYWORDS = {"where", "order", "group", "left", "right", "inner", "outer",
                  "cross", "join", "on", "limit", "set", "values", "having",
@@ -619,6 +821,8 @@ def parse_java(path):
             "bare_calls": bare_calls,
             "method_refs": method_refs,
             "transactional": "@Transactional" in m_ann_raw,
+            # 原始方法体（含字符串字面量）：JdbcTemplate 裸 SQL / Wrapper 链分析用
+            "body_raw": raw[brace_idx:mb_end + 1] if end_char == "{" else "",
         })
 
     return {
@@ -873,6 +1077,21 @@ def main():
     # 逆向索引
     rindex = reverse_index(graph, routes)
 
+    # 内嵌 SQL（JdbcTemplate 裸 SQL / MP Wrapper 动态链）
+    inline_sql = scan_inline_sql(classes, by_simple, table_to_entity)
+    route_of_node = {(r["controller"], r["handler"]): r for r in routes}
+    for rec in inline_sql:
+        ocls, ometh = rec["owner"].split("#", 1)
+        rec["in_tx"] = (ocls, ometh) in tx_inside
+        # 上游路由：Controller 方法自身就是路由；Service 方法走逆向索引
+        if (ocls, ometh) in route_of_node:
+            r = route_of_node[(ocls, ometh)]
+            rec["routes"] = [{"method": r["method"], "path": r["path"]}]
+        else:
+            ri = rindex.get(rec["owner"])
+            rec["routes"] = ri["routes"] if ri else []
+        rec["file"] = os.path.relpath(by_simple[ocls]["file"], ROOT)
+
     # ---------------------------------------------------------------- 渲染 markdown
     lines = []
 
@@ -1114,6 +1333,29 @@ def main():
         out.append("（未发现）")
     out.append("")
 
+    # 内嵌 SQL（JdbcTemplate / MP Wrapper）
+    out.append("---")
+    out.append("")
+    out.append("## 七、内嵌 SQL（不走 Mapper 接口：JdbcTemplate 裸 SQL / MP Wrapper 动态链）")
+    out.append("")
+    out.append("> 这类 SQL 散落在 Service/Controller/Config 里，传统 Mapper 索引完全看不到。")
+    out.append("")
+    if inline_sql:
+        for rec in inline_sql:
+            via = "JdbcTemplate" if rec["via"] == "jdbc-template" else "MP Wrapper"
+            tx = "  🔒事务内" if rec["in_tx"] else ""
+            out.append(f"- **{rec['owner']}** — @{rec['kind']}（{via}）{tx}  (`{rec['file']}`)")
+            short = rec["text"] if len(rec["text"]) <= 120 else rec["text"][:117] + "..."
+            out.append(f"  - `{short}`")
+            if rec["tables"]:
+                out.append(f"  - 涉及表: {', '.join('`' + t + '`' for t in rec['tables'])}")
+            if rec["routes"]:
+                out.append("  - 上游路由: " + ", ".join(
+                    f"`{r['method']} {r['path']}`" for r in rec["routes"]))
+    else:
+        out.append("（未发现）")
+    out.append("")
+
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("\n".join(out))
 
@@ -1184,6 +1426,8 @@ def main():
             for c in sorted(classes.values(), key=lambda x: x["name"])
             for meth in c["methods"] if meth["hidden"]
         ],
+        # 不走 Mapper 接口的 SQL：JdbcTemplate 裸 SQL / MP Wrapper 动态链
+        "inline_sql": inline_sql,
     }
     with open(OUT_JSON, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)

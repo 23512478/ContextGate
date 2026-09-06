@@ -1,5 +1,6 @@
 package com.demo.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.entity.Order;
 import com.demo.entity.User;
 import com.demo.mapper.OrderMapper;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 @Service
 public class OrderServiceImpl {
@@ -36,5 +38,14 @@ public class OrderServiceImpl {
 
     public java.util.List<java.util.Map<String, Object>> listMyOrders(Long userId) {
         return orderMapper.selectMyOrders(userId);
+    }
+
+    /** MP Wrapper 动态查询：SQL 不在注解也不在 XML，是 .like/.eq/.orderByDesc 链拼出来的。 */
+    public List<Order> searchByTitle(String keyword) {
+        LambdaQueryWrapper<Order> wrapper = new LambdaQueryWrapper<Order>()
+                .like(Order::getTitle, keyword)
+                .eq(Order::getStatus, 0)
+                .orderByDesc(Order::getCreateTime);
+        return orderMapper.selectList(wrapper);
     }
 }

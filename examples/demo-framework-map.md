@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-07 01:29:32
-- 扫描类: 12 个 | Controller: 3 个 | Mapper: 4 个 | 实体: 4 个 | HTTP 路由: 7 条 | 调用图边: 9 个方法
+- 生成时间: 2026-09-07 02:07:25
+- 扫描类: 15 个 | Controller: 4 个 | Mapper: 4 个 | 实体: 4 个 | HTTP 路由: 10 条 | 调用图边: 16 个方法
 
 ---
 
@@ -27,6 +27,20 @@
 ### `GET /api/v1/orders/my`
 **OrderController#listMy**
    ├─ OrderServiceImpl#listMyOrders  （组件/工具）
+
+### `GET /api/v1/orders/search`
+**OrderController#search**
+   ├─ OrderServiceImpl#searchByTitle  （组件/工具）
+
+### `GET /api/v1/stats/orders/sum`
+**StatsController#orderSum**
+   └─ StatsService#orderAmountSum
+      ├─ JdbcTemplate#queryForMap  （组件/工具）
+
+### `GET /api/v1/stats/wallets/top`
+**StatsController#topWallets**
+   └─ StatsService#topWallets
+      ├─ JdbcTemplate#queryForList  （组件/工具）
 
 ### `GET /api/v1/wallet/me`
 **WalletController#me**
@@ -145,4 +159,26 @@ UserMapper#selectById
 
 ## 六、隐藏入口（没有 HTTP 路由但会被框架触发）
 
-（未发现）
+- `PostConstruct` → DemoDataInitializer#initDemoData  (`src\main\java\com\demo\config\DemoDataInitializer.java`)
+
+---
+
+## 七、内嵌 SQL（不走 Mapper 接口：JdbcTemplate 裸 SQL / MP Wrapper 动态链）
+
+> 这类 SQL 散落在 Service/Controller/Config 里，传统 Mapper 索引完全看不到。
+
+- **DemoDataInitializer#initDemoData** — @INSERT（JdbcTemplate）  (`src\main\java\com\demo\config\DemoDataInitializer.java`)
+  - `INSERT INTO users (openid, nickname, wallet_balance) VALUES ('demo-openid', 'demo-user', 0)`
+  - 涉及表: `users`
+- **OrderServiceImpl#searchByTitle** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\OrderServiceImpl.java`)
+  - `SELECT * FROM orders WHERE title = ? AND status = ? ORDER BY create_time`
+  - 涉及表: `orders`
+  - 上游路由: `GET /api/v1/orders/search`
+- **StatsService#topWallets** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT id, nickname, wallet_balance FROM users ORDER BY wallet_balance DESC LIMIT 10`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/stats/wallets/top`
+- **StatsService#orderAmountSum** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT COALESCE(SUM(amount), 0) AS total FROM orders`
+  - 涉及表: `orders`
+  - 上游路由: `GET /api/v1/stats/orders/sum`

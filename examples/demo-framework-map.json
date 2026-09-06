@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-07T01:29:32",
-    "classes": 12,
-    "controllers": 3,
+    "generated_at": "2026-09-07T02:07:25",
+    "classes": 15,
+    "controllers": 4,
     "mappers": 4,
     "entities": 4,
-    "routes": 7
+    "routes": 10
   },
   "routes": [
     {
@@ -38,6 +38,24 @@
       "path": "/api/v1/orders/my",
       "controller": "OrderController",
       "handler": "listMy"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/orders/search",
+      "controller": "OrderController",
+      "handler": "search"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stats/orders/sum",
+      "controller": "StatsController",
+      "handler": "orderSum"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stats/wallets/top",
+      "controller": "StatsController",
+      "handler": "topWallets"
     },
     {
       "method": "GET",
@@ -243,6 +261,37 @@
               }
             ]
           }
+        },
+        {
+          "name": "selectList",
+          "params": "(MP 内置)",
+          "sql": {
+            "kind": "SELECT",
+            "text": "(MyBatis-Plus 内置 SELECT *)",
+            "tables": [
+              "orders"
+            ],
+            "columns": [
+              "orders.amount (Order.amount)",
+              "orders.create_time (Order.createTime)",
+              "orders.id (Order.id)",
+              "orders.status (Order.status)",
+              "orders.title (Order.title)",
+              "orders.user_id (Order.userId)"
+            ],
+            "mp_builtin": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "OrderServiceImpl#searchByTitle"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/orders/search"
+              }
+            ]
+          }
         }
       ]
     },
@@ -424,6 +473,14 @@
         "is_db_write": false
       }
     ],
+    "DemoDataInitializer#initDemoData": [
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "update",
+        "is_db_write": false
+      }
+    ],
     "OrderController#create": [
       {
         "kind": "component",
@@ -437,6 +494,14 @@
         "kind": "component",
         "class": "OrderServiceImpl",
         "method": "listMyOrders",
+        "is_db_write": false
+      }
+    ],
+    "OrderController#search": [
+      {
+        "kind": "component",
+        "class": "OrderServiceImpl",
+        "method": "searchByTitle",
         "is_db_write": false
       }
     ],
@@ -459,6 +524,46 @@
         "kind": "mapper",
         "class": "OrderMapper",
         "method": "selectMyOrders",
+        "is_db_write": false
+      }
+    ],
+    "OrderServiceImpl#searchByTitle": [
+      {
+        "kind": "mapper",
+        "class": "OrderMapper",
+        "method": "selectList",
+        "is_db_write": false
+      }
+    ],
+    "StatsController#orderSum": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "orderAmountSum",
+        "is_db_write": false
+      }
+    ],
+    "StatsController#topWallets": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "topWallets",
+        "is_db_write": false
+      }
+    ],
+    "StatsService#orderAmountSum": [
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "queryForMap",
+        "is_db_write": false
+      }
+    ],
+    "StatsService#topWallets": [
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "queryForList",
         "is_db_write": false
       }
     ],
@@ -489,5 +594,100 @@
       "UserMapper#selectById"
     ]
   },
-  "hidden_entries": []
+  "hidden_entries": [
+    {
+      "class": "DemoDataInitializer",
+      "method": "initDemoData",
+      "annotations": [
+        "PostConstruct"
+      ],
+      "file": "src\\main\\java\\com\\demo\\config\\DemoDataInitializer.java"
+    }
+  ],
+  "inline_sql": [
+    {
+      "owner": "DemoDataInitializer#initDemoData",
+      "via": "jdbc-template",
+      "kind": "INSERT",
+      "text": "INSERT INTO users (openid, nickname, wallet_balance) VALUES ('demo-openid', 'demo-user', 0)",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.nickname (User.nickname)",
+        "users.openid (User.openid)",
+        "users.wallet_balance (User.walletBalance)"
+      ],
+      "in_tx": false,
+      "routes": [],
+      "file": "src\\main\\java\\com\\demo\\config\\DemoDataInitializer.java"
+    },
+    {
+      "owner": "OrderServiceImpl#searchByTitle",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT * FROM orders WHERE title = ? AND status = ? ORDER BY create_time",
+      "tables": [
+        "orders"
+      ],
+      "columns": [
+        "orders.amount (Order.amount)",
+        "orders.create_time (Order.createTime)",
+        "orders.id (Order.id)",
+        "orders.status (Order.status)",
+        "orders.title (Order.title)",
+        "orders.user_id (Order.userId)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/orders/search"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\OrderServiceImpl.java"
+    },
+    {
+      "owner": "StatsService#topWallets",
+      "via": "jdbc-template",
+      "kind": "SELECT",
+      "text": "SELECT id, nickname, wallet_balance FROM users ORDER BY wallet_balance DESC LIMIT 10",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.id (User.id)",
+        "users.nickname (User.nickname)",
+        "users.wallet_balance (User.walletBalance)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/stats/wallets/top"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    },
+    {
+      "owner": "StatsService#orderAmountSum",
+      "via": "jdbc-template",
+      "kind": "SELECT",
+      "text": "SELECT COALESCE(SUM(amount), 0) AS total FROM orders",
+      "tables": [
+        "orders"
+      ],
+      "columns": [
+        "orders.amount (Order.amount)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/stats/orders/sum"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    }
+  ]
 }

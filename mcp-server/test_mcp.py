@@ -174,6 +174,35 @@ def main():
         assert "CommentMapper#selectDetail" in out_nick_xml, \
             "XML JOIN 读 u.nickname 应跨表计入 User 影响面"
 
+        # 7.11 内嵌 SQL：MP Wrapper 动态链（trace_call 节点上显示 MP Wrapper 合成 SQL）
+        print("\n" + "=" * 70)
+        print("### trace_call('GET /api/v1/orders/search')  ← Wrapper 动态 SQL")
+        print("-" * 70)
+        out_wrapper = call_tool(proc, "trace_call", {"query": "GET /api/v1/orders/search"})
+        print(out_wrapper)
+        assert "(MP Wrapper)" in out_wrapper, "Wrapper 链应在调用链节点上标注 MP Wrapper"
+        assert "SELECT * FROM orders" in out_wrapper, "Wrapper 应合成为 SELECT * 全列"
+
+        # 7.12 内嵌 SQL：JdbcTemplate 裸 SQL（变量传参 + 调用链标注）
+        out_jdbc_chain = call_tool(proc, "trace_call", {"query": "GET /api/v1/stats/wallets/top"})
+        assert "(JdbcTemplate)" in out_jdbc_chain, "JdbcTemplate 裸 SQL 应在调用链上标注"
+        assert "wallet_balance" in out_jdbc_chain, "裸 SQL 文本应出现在调用链上"
+
+        # 7.13 内嵌 SQL 进影响面：wallet_balance 被 StatsService 裸 SELECT 触碰
+        out_wallet_inline = call_tool(proc, "impact", {"entity": "User", "field": "walletBalance"})
+        assert "StatsService#topWallets" in out_wallet_inline, \
+            "JdbcTemplate 裸 SELECT wallet_balance 应计入 User 影响面"
+        assert "内嵌 SQL" in out_wallet_inline, "impact 应有内嵌 SQL 分段"
+        # Order.title 被 Wrapper .like 条件触碰
+        out_order_inline = call_tool(proc, "impact", {"entity": "Order", "field": "title"})
+        assert "OrderServiceImpl#searchByTitle" in out_order_inline, \
+            "MP Wrapper .like(Order::getTitle) 应计入 Order.title 影响面"
+
+        # 7.14 find_sql 反查内嵌 SQL
+        out_find_inline = call_tool(proc, "find_sql", {"query": "topWallets"})
+        assert "JdbcTemplate" in out_find_inline and "StatsService#topWallets" in out_find_inline, \
+            "find_sql 应能反查 JdbcTemplate 裸 SQL"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

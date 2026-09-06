@@ -108,7 +108,7 @@ python mcp-server/test_mcp.py
 
 - **正则级解析，不是真 Java AST**：复杂语法（内部类、Lombok 生成方法等）可能漏，遇到再补规则
 - **MyBatis-Plus 内置方法给的是实体级上界**：`selectById` 标"触碰全部列"是安全的过近似（宁多报不漏报），不区分业务实际读了哪几列
-- **不解析 JdbcTemplate 裸 SQL、MyBatis-Plus Wrapper（`lambdaQuery().eq(...)`）动态拼接**
+- **Wrapper / JdbcTemplate 是语句级识别**：Wrapper 拆成变量后跨语句链式调用（`var w = new LambdaQueryWrapper<>(); w.eq(...)`）只识别构造语句；JdbcTemplate 的 SQL 常量抽成类级 `static final` 字段目前不追踪（方法内局部 `String sql = ...` 支持）
 - **XML 复杂结构未覆盖**：`<association>`/`<collection>` 嵌套映射、`<foreach>` 批量、resultMap `extends` 继承目前不解析（demo 夹具覆盖了 resultMap/sql/include/set/if 这些主流写法）
 - 目前一份地图对应一个项目；多项目切换靠 env 配置
 
@@ -119,7 +119,7 @@ python mcp-server/test_mcp.py
 三种参与方式，按难度排序：
 
 1. **拿你的项目跑一把，报漏报**（最有价值）：`python analyzer/framework_map.py <你的项目>`，对照 `framework_map.md` 找"这条链路/这个字段明明用了却没出现"的地方，提 issue 附一小段 Java/XML 源码即可。
-2. **补解析规则**：已知排队中的规则——MyBatis-Plus `lambdaQuery()` Wrapper 拼接、JdbcTemplate 裸 SQL、XML `<association>`/`<collection>`/`<foreach>`/resultMap `extends`、多模块 Maven 路径。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
+2. **补解析规则**：已知排队中的规则——Wrapper 跨语句链式调用与 `.select()` 子查询、类级 SQL 常量、XML `<association>`/`<collection>`/`<foreach>`/resultMap `extends`、多模块 Maven 路径。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
 3. **适配更多 AI 工具 / 语言**：MCP 是标准协议，接入新工具基本零成本；分析器目前只覆盖 Java 侧。
 
 ## License

@@ -143,6 +143,10 @@ def trace_call(query: str) -> str:
         tx_seeds = set(data()["transactional"]["seeds"])
         tx_inside = set(data()["transactional"]["inside_closure"])
         smap = mapper_sql_map()
+        # 内嵌 SQL（JdbcTemplate / Wrapper）按所属方法挂到调用链节点上
+        inline_by_owner = {}
+        for rec in data().get("inline_sql", []):
+            inline_by_owner.setdefault(rec["owner"], []).append(rec)
 
         out_lines = []
         if route_header:
@@ -176,6 +180,14 @@ def trace_call(query: str) -> str:
             if sql_info and not sql_info.get("mp_builtin"):
                 sql_text = sql_info["text"]
                 short = sql_text if len(sql_text) <= 110 else sql_text[:107] + "..."
+                out_lines.append(f"{prefix}      `{short}`")
+            # 该方法体内写死的 SQL：JdbcTemplate 裸 SQL / MP Wrapper 动态链
+            for rec in inline_by_owner.get(node, []):
+                label = "JdbcTemplate" if rec["via"] == "jdbc-template" else "MP Wrapper"
+                txflag = " 🔒事务内" if rec.get("in_tx") else ""
+                out_lines.append(f"{prefix}  → @{rec['kind']} ({label}){txflag}")
+                txt = rec["text"]
+                short = txt if len(txt) <= 110 else txt[:107] + "..."
                 out_lines.append(f"{prefix}      `{short}`")
             for edge in graph.get(node, []):
                 child = f"{edge['class']}#{edge['method']}"
@@ -224,9 +236,12 @@ def find_sql(query: str) -> str:
                 continue
             if ql in key.lower() or ql in sql["text"].lower():
                 hits.append((key, info))
-        if not hits:
+        # 内嵌 SQL（JdbcTemplate / Wrapper）：散在方法体里，Mapper 索引看不到
+        inline_hits = [rec for rec in data().get("inline_sql", [])
+                       if ql in rec["owner"].lower() or ql in rec["text"].lower()]
+        if not hits and not inline_hits:
             return f"没找到匹配 '{q}' 的自定义 SQL。\n提示: 也可以输入表名或列名片段。"
-        out = [f"找到 {len(hits)} 条匹配（最多显示 8 条）：", ""]
+        out = [f"找到 {len(hits) + len(inline_hits)} 条匹配（最多显示 8 条）：", ""]
         for key, info in hits[:8]:
             sql = info["sql"]
             rev = info["reverse"]
@@ -242,6 +257,19 @@ def find_sql(query: str) -> str:
             routes = rev.get("routes", [])
             if routes:
                 out.append("- 上游路由: " + ", ".join(f"`{r['method']} {r['path']}`" for r in routes))
+            out.append("")
+        for rec in inline_hits:
+            label = "JdbcTemplate" if rec["via"] == "jdbc-template" else "MP Wrapper"
+            txflag = "  🔒事务内" if rec.get("in_tx") else ""
+            out.append(f"**{rec['owner']}** — @{rec['kind']}（{label}）{txflag}")
+            out.append(f"- SQL: `{rec['text']}`")
+            if rec.get("tables"):
+                out.append(f"- 涉及表: {', '.join('`' + t + '`' for t in rec['tables'])}")
+            if rec.get("columns"):
+                out.append(f"- 触碰列: {', '.join('`' + c + '`' for c in rec['columns'])}")
+            if rec.get("routes"):
+                out.append("- 上游路由: " + ", ".join(
+                    f"`{r['method']} {r['path']}`" for r in rec["routes"]))
             out.append("")
         return "\n".join(out)
     except Exception as e:
@@ -307,6 +335,17 @@ def impact(entity: str, field: str = "") -> str:
                     mp_sites.append((key, None, callers, key in tx_inside))
                     mp_routes.extend(rev.get("routes", []))
 
+        # 内嵌 SQL（JdbcTemplate / Wrapper）：同样按表/列过滤
+        inline_hits = []
+        for rec in data().get("inline_sql", []):
+            if table not in (rec.get("tables") or []):
+                continue
+            if col is not None:
+                marker = f"{table}.{col} ({ent['name']}.{field})"
+                if marker not in (rec.get("columns") or []):
+                    continue
+            inline_hits.append(rec)
+
         # 汇总路由
         route_set = {}
         for key, sql, _ in affected_sqls:
@@ -314,10 +353,14 @@ def impact(entity: str, field: str = "") -> str:
                 route_set[f"{r['method']} {r['path']}"] = r
         for r in mp_routes:
             route_set[f"{r['method']} {r['path']}"] = r
+        for rec in inline_hits:
+            for r in rec.get("routes", []):
+                route_set[f"{r['method']} {r['path']}"] = r
 
         out = [f"## 影响面: {ent['name']} → 表 `{table}`" + (f"（字段 `{field}` → 列 `{col}`）" if field else "（实体级）"), ""]
         out.append(f"- 专属 Mapper: {', '.join(f'`{m}`' for m in own_mappers) or '无'}")
-        out.append(f"- 被自定义 SQL 触碰: {len(affected_sqls)} 处")
+        out.append(f"- 被自定义 SQL 触碰: {len(affected_sqls)} 处"
+                   + (f"（其中内嵌 {len(inline_hits)} 处）" if inline_hits else ""))
         out.append(f"- MP 内置 CRUD 调用点: {len(mp_sites)} 个方法（已展开为全列触碰）")
         out.append(f"- 波及路由: {len(route_set)} 条")
         out.append("")
@@ -328,6 +371,16 @@ def impact(entity: str, field: str = "") -> str:
                 tx_flag = "  🔒事务内写" if in_tx else ""
                 out.append(f"- **{key}** — @{sql['kind']}{tx_flag}")
                 short = sql["text"] if len(sql["text"]) <= 110 else sql["text"][:107] + "..."
+                out.append(f"  - `{short}`")
+            out.append("")
+        if inline_hits:
+            out.append("### 受影响的内嵌 SQL（JdbcTemplate / MP Wrapper，不走 Mapper 接口）")
+            out.append("")
+            for rec in inline_hits:
+                label = "JdbcTemplate" if rec["via"] == "jdbc-template" else "MP Wrapper"
+                tx_flag = "  🔒事务内写" if rec.get("in_tx") and rec["kind"] != "SELECT" else ""
+                out.append(f"- **{rec['owner']}** — @{rec['kind']}（{label}）{tx_flag}")
+                short = rec["text"] if len(rec["text"]) <= 110 else rec["text"][:107] + "..."
                 out.append(f"  - `{short}`")
             out.append("")
         if mp_sites:
@@ -349,8 +402,8 @@ def impact(entity: str, field: str = "") -> str:
             for rp in sorted(route_set):
                 out.append(f"- `{rp}`")
             out.append("")
-        if field and not affected_sqls and not mp_sites:
-            out.append(f"（字段 `{field}` 未被任何自定义 SQL 或 MP 内置方法触碰——可能确实无人使用。）")
+        if field and not affected_sqls and not mp_sites and not inline_hits:
+            out.append(f"（字段 `{field}` 未被任何自定义 SQL、内嵌 SQL 或 MP 内置方法触碰——可能确实无人使用。）")
         return "\n".join(out)
     except Exception as e:
         return f"[impact 出错] {e}"
