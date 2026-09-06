@@ -295,52 +295,35 @@ def parse_xml_mappers(resources_dir, table_to_entity, entity_by_simple):
                     mid = stmt.get("id")
                     if not mid:
                         continue
-                    # <include refid="..."/> 替换为片段文本
-                    body_parts = []
-                    for el in stmt.iter():
-                        if el.tag == "include":
-                            ref = el.get("refid")
-                            if ref and ref in fragments:
-                                body_parts.append(fragments[ref])
-                                continue
-                        # 只取文本节点（itertext 会拼所有文本，include 已手动处理）
-                    # 先做 include 替换再拼文本
+                    # <include refid="x"/> 替换成 <sql id="x"> 片段文本，再剥标签
                     raw_xml = ET.tostring(stmt, encoding="unicode")
-                    # 简单做：用正则把 <include refid="x"/> 换成片段文本
+
                     def _inc(m):
-                        r = m.group(1)
-                        return fragments.get(r, m.group(0))
+                        return fragments.get(m.group(1), m.group(0))
+
                     raw_xml = re.sub(r'<include\s+refid="([^"]+)"\s*/>', _inc, raw_xml)
-                    # 去标签，只留文本
                     sql_text = re.sub(r"<[^>]+>", " ", raw_xml)
                     sql_text = re.sub(r"\s+", " ", sql_text).strip()
-                    if not sql_text:
-                        body_parts.clear()
-                        sql_text = " ".join(stmt.itertext())
-                        sql_text = re.sub(r"\s+", " ", sql_text).strip()
+                    # <set>/<if> 动态标签剥掉后可能留下 ", WHERE" 这种残尾，清掉
+                    sql_text = re.sub(r",\s+(?=WHERE|ORDER|GROUP|LIMIT)", " ", sql_text,
+                                      flags=re.IGNORECASE)
                     tables = list(dict.fromkeys(t.lower() for t in SQL_TABLE_RE.findall(sql_text)))
-                    cols = []
-                    rm_attr = stmt.get("resultMap")
                     primary_table = tables[0] if tables else None
-                    ent = table_to_entity.get(primary_table) if primary_table else None
+                    # 列触碰先走统一解析（字面列名 + SELECT * / 别名星号 + 跨表 JOIN 列）
+                    cols = resolve_sql_columns(sql_text, tables, table_to_entity)
+                    # 有 resultMap：它显式声明的列也算触碰（property 就是 Java 字段名）
+                    rm_attr = stmt.get("resultMap")
                     if rm_attr and rm_attr in result_maps:
-                        # 有 resultMap：用它的 column 列表拼触碰列
-                        _rtype, col_prop = result_maps[rm_attr]
-                        target_ent = entity_by_simple.get(_rtype) or ent
-                        if target_ent and target_ent.get("entity_columns"):
-                            inv = {col: prop for prop, col in target_ent["entity_columns"].items()}
-                            tname = target_ent["table_name"]
-                            for c in col_prop:
-                                fname = inv.get(c)
-                                if fname:
-                                    cols.append(f"{tname}.{c} ({target_ent['name']}.{fname})")
+                        rtype, col_prop = result_maps[rm_attr]
+                        r_ent = entity_by_simple.get(rtype)
+                        if r_ent and r_ent.get("entity_columns"):
+                            tname = r_ent["table_name"]
+                            for c, prop in col_prop.items():
+                                cols.append(f"{tname}.{c} ({r_ent['name']}.{prop})")
                         else:
                             t = primary_table or ""
-                            for c in col_prop:
-                                cols.append(f"{t}.{c} ({_rtype}.{col_prop[c]})")
-                    else:
-                        # 无 resultMap：走统一列解析（字面列名 + SELECT * / 别名星号展开）
-                        cols.extend(resolve_sql_columns(sql_text, tables, table_to_entity))
+                            for c, prop in col_prop.items():
+                                cols.append(f"{t}.{c} ({rtype}.{prop})")
                     out[f"{mapper_class}#{mid}"] = {
                         "kind": kind,
                         "text": sql_text,
@@ -382,8 +365,20 @@ def resolve_sql_columns(sql, tables, table_to_entity):
             continue
         # 这张表是否被星号覆盖：裸 * 或它的别名出现在 x.* 里
         star = bare_star or any(alias_map.get(a) == t for a in star_aliases)
+        # 这张表的限定前缀：表名本身 + 指向它的别名（c / comments）
+        prefixes = {t} | {a for a, tt in alias_map.items() if tt == t}
         for fname, col in ent["entity_columns"].items():
-            if star or re.search(r"\b" + re.escape(col) + r"\b", sql_for_cols):
+            if star:
+                cols.append(f"{t}.{col} ({ent['name']}.{fname})")
+                continue
+            # 带前缀：c.create_time / comments.create_time
+            qualified = any(
+                re.search(r"\b" + re.escape(p) + r"\." + re.escape(col) + r"\b", sql_for_cols)
+                for p in prefixes)
+            # 裸列名（前面不能是点，否则它属于别的别名，如 u.create_time 里的 create_time 不算）；
+            # 多表 JOIN 时裸列名归属有歧义，保守归所有含该列的表（循环已按实体列过滤）
+            bare = bool(re.search(r"(?<![\w.])" + re.escape(col) + r"\b", sql_for_cols))
+            if qualified or bare:
                 cols.append(f"{t}.{col} ({ent['name']}.{fname})")
     return sorted(set(cols))
 

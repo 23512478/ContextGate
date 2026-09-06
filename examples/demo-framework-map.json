@@ -1,14 +1,32 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-07T01:08:14",
-    "classes": 9,
-    "controllers": 2,
-    "mappers": 3,
-    "entities": 3,
-    "routes": 4
+    "generated_at": "2026-09-07T01:29:32",
+    "classes": 12,
+    "controllers": 3,
+    "mappers": 4,
+    "entities": 4,
+    "routes": 7
   },
   "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/comments/order/{orderId}",
+      "controller": "CommentController",
+      "handler": "listByOrder"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/comments/{id}",
+      "controller": "CommentController",
+      "handler": "detail"
+    },
+    {
+      "method": "PATCH",
+      "path": "/api/v1/comments/{id}",
+      "controller": "CommentController",
+      "handler": "update"
+    },
     {
       "method": "POST",
       "path": "/api/v1/orders",
@@ -35,6 +53,104 @@
     }
   ],
   "mappers": [
+    {
+      "class": "CommentMapper",
+      "base_entity": "Comment",
+      "methods": [
+        {
+          "name": "selectDetail",
+          "params": "Long id",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.nickname AS user_name FROM comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = #{id}",
+            "tables": [
+              "comments",
+              "users"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.create_time (Comment.createTime)",
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)",
+              "comments.user_id (Comment.userId)",
+              "users.id (User.id)",
+              "users.nickname (User.nickname)"
+            ],
+            "mp_builtin": false
+          },
+          "reverse": {
+            "direct_callers": [
+              "CommentController#detail"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/comments/{id}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "listByOrderId",
+          "params": "Long orderId",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT * FROM comments WHERE order_id = #{orderId} ORDER BY create_time DESC",
+            "tables": [
+              "comments"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.create_time (Comment.createTime)",
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)",
+              "comments.user_id (Comment.userId)"
+            ],
+            "mp_builtin": false
+          },
+          "reverse": {
+            "direct_callers": [
+              "CommentController#listByOrder"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/comments/order/{orderId}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "updateContent",
+          "params": "Long id, String content",
+          "sql": {
+            "kind": "UPDATE",
+            "text": "UPDATE comments content = #{content} WHERE id = #{id}",
+            "tables": [
+              "comments"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.id (Comment.id)"
+            ],
+            "mp_builtin": false
+          },
+          "reverse": {
+            "direct_callers": [
+              "CommentController#update"
+            ],
+            "routes": [
+              {
+                "method": "PATCH",
+                "path": "/api/v1/comments/{id}"
+              }
+            ]
+          }
+        }
+      ]
+    },
     {
       "class": "MessageMapper",
       "base_entity": "Message",
@@ -81,7 +197,6 @@
               "orders.status (Order.status)",
               "orders.title (Order.title)",
               "orders.user_id (Order.userId)",
-              "users.create_time (User.createTime)",
               "users.id (User.id)",
               "users.nickname (User.nickname)"
             ]
@@ -238,6 +353,18 @@
   ],
   "entities": [
     {
+      "name": "Comment",
+      "table": "comments",
+      "columns": {
+        "id": "id",
+        "orderId": "order_id",
+        "userId": "user_id",
+        "content": "content",
+        "rating": "rating",
+        "createTime": "create_time"
+      }
+    },
+    {
       "name": "Message",
       "table": "messages",
       "columns": {
@@ -273,6 +400,30 @@
     }
   ],
   "call_graph": {
+    "CommentController#detail": [
+      {
+        "kind": "mapper",
+        "class": "CommentMapper",
+        "method": "selectDetail",
+        "is_db_write": false
+      }
+    ],
+    "CommentController#listByOrder": [
+      {
+        "kind": "mapper",
+        "class": "CommentMapper",
+        "method": "listByOrderId",
+        "is_db_write": false
+      }
+    ],
+    "CommentController#update": [
+      {
+        "kind": "mapper",
+        "class": "CommentMapper",
+        "method": "updateContent",
+        "is_db_write": false
+      }
+    ],
     "OrderController#create": [
       {
         "kind": "component",

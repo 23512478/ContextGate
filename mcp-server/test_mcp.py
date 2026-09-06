@@ -142,6 +142,38 @@ def main():
         out_cross = call_tool(proc, "impact", {"entity": "User", "field": "nickname"})
         assert "OrderMapper#selectMyOrders" in out_cross, "跨表 JOIN 读 u.nickname 应计入 User 影响面"
 
+        # 7.8 XML mapper 回归：trace_call 走到 XML 里的 SQL（resultMap + include + JOIN）
+        print("\n" + "=" * 70)
+        print("### trace_call('GET /api/v1/comments/{id}')  ← SQL 在 CommentMapper.xml")
+        print("-" * 70)
+        out_xml_chain = call_tool(proc, "trace_call", {"query": "GET /api/v1/comments/{id}"})
+        print(out_xml_chain)
+        assert "CommentMapper#selectDetail" in out_xml_chain, "XML 语句应出现在调用链上"
+
+        # 7.9 XML mapper 回归：find_sql 反查 XML 语句（裸 SELECT * 展开 + <set> 动态 SQL）
+        print("\n" + "=" * 70)
+        print("### find_sql('listByOrderId')  ← 反查 XML <select>")
+        print("-" * 70)
+        out_find_xml = call_tool(proc, "find_sql", {"query": "listByOrderId"})
+        print(out_find_xml)
+        assert "CommentMapper#listByOrderId" in out_find_xml, "XML <select> 应被 find_sql 反查"
+        assert "GET /api/v1/comments/order/" in out_find_xml, "XML 语句也应能逆向到路由"
+
+        # 7.10 XML mapper 回归：impact 覆盖 resultMap / SELECT * / <set update 三类 XML 语句，
+        #       且 XML 里的 JOIN 读 u.nickname 应跨表计入 User
+        out_comment = call_tool(proc, "impact", {"entity": "Comment", "field": "content"})
+        print("\n" + "=" * 70)
+        print("### impact('Comment', field='content')  ← 三类 XML 语句都应命中")
+        print("-" * 70)
+        print(out_comment)
+        assert "selectDetail" in out_comment, "resultMap 语句应命中 content"
+        assert "listByOrderId" in out_comment, "XML 裸 SELECT * 应展开命中 content"
+        assert "updateContent" in out_comment, "<set> 更新语句应命中 content"
+        # XML 里的 JOIN 读 u.nickname：跨表计入 User 影响面
+        out_nick_xml = call_tool(proc, "impact", {"entity": "User", "field": "nickname"})
+        assert "CommentMapper#selectDetail" in out_nick_xml, \
+            "XML JOIN 读 u.nickname 应跨表计入 User 影响面"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.demo.mapper.CommentMapper">
+
+    <!-- 复用列片段：<include refid="baseColumns"/> 会展开成这段 -->
+    <sql id="baseColumns">
+        c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time
+    </sql>
+
+    <!-- resultMap：显式列名 -> 实体属性映射 -->
+    <resultMap id="commentResultMap" type="com.demo.entity.Comment">
+        <id     column="id"          property="id"/>
+        <result column="order_id"    property="orderId"/>
+        <result column="user_id"     property="userId"/>
+        <result column="content"    property="content"/>
+        <result column="rating"     property="rating"/>
+        <result column="create_time" property="createTime"/>
+    </resultMap>
+
+    <!-- resultMap + JOIN + <include>：查评价详情，顺带带出用户昵称 -->
+    <select id="selectDetail" resultMap="commentResultMap">
+        SELECT
+        <include refid="baseColumns"/>,
+        u.nickname AS user_name
+        FROM comments c
+        LEFT JOIN users u ON c.user_id = u.id
+        WHERE c.id = #{id}
+    </select>
+
+    <!-- 裸 SELECT *：列全靠星号带出，分析器应展开为 comments 全列 -->
+    <select id="listByOrderId">
+        SELECT * FROM comments
+        WHERE order_id = #{orderId}
+        ORDER BY create_time DESC
+    </select>
+
+    <!-- <set> 动态 SQL：只更新非空字段 -->
+    <update id="updateContent">
+        UPDATE comments
+        <set>
+            <if test="content != null">content = #{content},</if>
+        </set>
+        WHERE id = #{id}
+    </update>
+
+</mapper>

@@ -1,12 +1,24 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-07 01:08:14
-- 扫描类: 9 个 | Controller: 2 个 | Mapper: 3 个 | 实体: 3 个 | HTTP 路由: 4 条 | 调用图边: 6 个方法
+- 生成时间: 2026-09-07 01:29:32
+- 扫描类: 12 个 | Controller: 3 个 | Mapper: 4 个 | 实体: 4 个 | HTTP 路由: 7 条 | 调用图边: 9 个方法
 
 ---
 
 ## 一、HTTP 路由调用链
+
+### `GET /api/v1/comments/order/{orderId}`
+**CommentController#listByOrder**
+   ├─ CommentMapper#listByOrderId  （Mapper 方法，SQL 未找到）
+
+### `GET /api/v1/comments/{id}`
+**CommentController#detail**
+   ├─ CommentMapper#selectDetail  （Mapper 方法，SQL 未找到）
+
+### `PATCH /api/v1/comments/{id}`
+**CommentController#update**
+   ├─ CommentMapper#updateContent  （Mapper 方法，SQL 未找到）
 
 ### `POST /api/v1/orders`
 **OrderController#create**
@@ -36,7 +48,7 @@
 - **OrderMapper#selectMyOrders** — @SELECT
   - SQL: `SELECT o.*, u.nickname AS user_name FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE o.user_id = #{userId} ORDER BY o.create_time DESC`
   - 涉及表: `orders`, `users`
-  - 触碰列: `orders.amount (Order.amount)`, `orders.create_time (Order.createTime)`, `orders.id (Order.id)`, `orders.status (Order.status)`, `orders.title (Order.title)`, `orders.user_id (Order.userId)`, `users.create_time (User.createTime)`, `users.id (User.id)`, `users.nickname (User.nickname)`
+  - 触碰列: `orders.amount (Order.amount)`, `orders.create_time (Order.createTime)`, `orders.id (Order.id)`, `orders.status (Order.status)`, `orders.title (Order.title)`, `orders.user_id (Order.userId)`, `users.id (User.id)`, `users.nickname (User.nickname)`
   - ↑ 上游路由: `GET /api/v1/orders/my`
 - **UserMapper#selectByOpenid** — @SELECT
   - SQL: `SELECT * FROM users WHERE openid = #{openid}`
@@ -77,6 +89,12 @@ UserMapper#selectById
 
 > 给实体加/删字段前，先看这一节：哪些 SQL 会受影响、哪些路由会变化。
 
+### Comment → 表 `comments`（6 个字段）
+
+- 字段: `id`→`id`, `orderId`→`order_id`, `userId`→`user_id`, `content`→`content`, `rating`→`rating`, `createTime`→`create_time`
+- 专属 Mapper: `CommentMapper`
+- 被自定义 SQL 触碰: 无（全部走 MP 内置 CRUD）
+
 ### Message → 表 `messages`（5 个字段）
 
 - 字段: `id`→`id`, `conversationId`→`conversation_id`, `role`→`role`, `content`→`content`, `createTime`→`create_time`
@@ -113,6 +131,15 @@ UserMapper#selectById
 - **OrderMapper#selectMyOrders** ← 1 条路由 
   - 直接调用者: `OrderServiceImpl#listMyOrders`
   - `GET /api/v1/orders/my`
+- **CommentMapper#updateContent** ← 1 条路由 
+  - 直接调用者: `CommentController#update`
+  - `PATCH /api/v1/comments/{id}`
+- **CommentMapper#selectDetail** ← 1 条路由 
+  - 直接调用者: `CommentController#detail`
+  - `GET /api/v1/comments/{id}`
+- **CommentMapper#listByOrderId** ← 1 条路由 
+  - 直接调用者: `CommentController#listByOrder`
+  - `GET /api/v1/comments/order/{orderId}`
 
 ---
 

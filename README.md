@@ -87,7 +87,7 @@ python mcp-server/test_mcp.py
 - **正则级解析，不是真 Java AST**：复杂语法（内部类、Lombok 生成方法等）可能漏，遇到再补规则
 - **MyBatis-Plus 内置方法给的是实体级上界**：`selectById` 标"触碰全部列"是安全的过近似（宁多报不漏报），不区分业务实际读了哪几列
 - **不解析 JdbcTemplate 裸 SQL、MyBatis-Plus Wrapper（`lambdaQuery().eq(...)`）动态拼接**
-- **XML mapper 解析脚手架尚未在真实 XML 项目上检验**
+- **XML 复杂结构未覆盖**：`<association>`/`<collection>` 嵌套映射、`<foreach>` 批量、resultMap `extends` 继承目前不解析（demo 夹具覆盖了 resultMap/sql/include/set/if 这些主流写法）
 - 目前一份地图对应一个项目；多项目切换靠 env 配置
 
 ## 贡献
