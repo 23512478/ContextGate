@@ -120,7 +120,7 @@ python mcp-server/test_mcp.py
 
 1. **拿你的项目跑一把，报漏报**（最有价值）：`python analyzer/framework_map.py <你的项目>`，对照 `framework_map.md` 找"这条链路/这个字段明明用了却没出现"的地方，提 issue 附一小段 Java/XML 源码即可。
 2. **补解析规则**：已知排队中的规则——MyBatis-Plus `lambdaQuery()` Wrapper 拼接、JdbcTemplate 裸 SQL、XML `<association>`/`<collection>`/`<foreach>`/resultMap `extends`、多模块 Maven 路径。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
-3. **适配更多 AI 工具 / 语言**：MCP 是标准协议，接入新工具基本零成本；分析器目前只覆盖 Java 侧。
+3. **适配更多 AI 工具 / 语言**：MCP 是标准协议，接入新工具基本零成本；分析器目前只覆盖 Java 。
 
 ## License
 
