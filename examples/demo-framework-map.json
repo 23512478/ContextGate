@@ -1,0 +1,342 @@
+{
+  "meta": {
+    "project": "demo-project",
+    "generated_at": "2026-09-07T01:08:14",
+    "classes": 9,
+    "controllers": 2,
+    "mappers": 3,
+    "entities": 3,
+    "routes": 4
+  },
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/api/v1/orders",
+      "controller": "OrderController",
+      "handler": "create"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/orders/my",
+      "controller": "OrderController",
+      "handler": "listMy"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/me",
+      "controller": "WalletController",
+      "handler": "me"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/wallet/recharge",
+      "controller": "WalletController",
+      "handler": "recharge"
+    }
+  ],
+  "mappers": [
+    {
+      "class": "MessageMapper",
+      "base_entity": "Message",
+      "methods": [
+        {
+          "name": "selectRecent",
+          "params": "Long conversationId",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT * FROM messages WHERE conversation_id = #{conversationId} ORDER BY create_time DESC",
+            "tables": [
+              "messages"
+            ],
+            "columns": [
+              "messages.content (Message.content)",
+              "messages.conversation_id (Message.conversationId)",
+              "messages.create_time (Message.createTime)",
+              "messages.id (Message.id)",
+              "messages.role (Message.role)"
+            ]
+          },
+          "reverse": null
+        }
+      ]
+    },
+    {
+      "class": "OrderMapper",
+      "base_entity": "Order",
+      "methods": [
+        {
+          "name": "selectMyOrders",
+          "params": "Long userId",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT o.*, u.nickname AS user_name FROM orders o LEFT JOIN users u ON o.user_id = u.id WHERE o.user_id = #{userId} ORDER BY o.create_time DESC",
+            "tables": [
+              "orders",
+              "users"
+            ],
+            "columns": [
+              "orders.amount (Order.amount)",
+              "orders.create_time (Order.createTime)",
+              "orders.id (Order.id)",
+              "orders.status (Order.status)",
+              "orders.title (Order.title)",
+              "orders.user_id (Order.userId)",
+              "users.create_time (User.createTime)",
+              "users.id (User.id)",
+              "users.nickname (User.nickname)"
+            ]
+          },
+          "reverse": {
+            "direct_callers": [
+              "OrderServiceImpl#listMyOrders"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/orders/my"
+              }
+            ]
+          }
+        },
+        {
+          "name": "insert",
+          "params": "(MP 内置)",
+          "sql": {
+            "kind": "INSERT",
+            "text": "(MyBatis-Plus 内置 INSERT 全表写)",
+            "tables": [
+              "orders"
+            ],
+            "columns": [
+              "orders.amount (Order.amount)",
+              "orders.create_time (Order.createTime)",
+              "orders.id (Order.id)",
+              "orders.status (Order.status)",
+              "orders.title (Order.title)",
+              "orders.user_id (Order.userId)"
+            ],
+            "mp_builtin": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "OrderServiceImpl#create"
+            ],
+            "routes": [
+              {
+                "method": "POST",
+                "path": "/api/v1/orders"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "class": "UserMapper",
+      "base_entity": "User",
+      "methods": [
+        {
+          "name": "selectByOpenid",
+          "params": "String openid",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT * FROM users WHERE openid = #{openid}",
+            "tables": [
+              "users"
+            ],
+            "columns": [
+              "users.create_time (User.createTime)",
+              "users.id (User.id)",
+              "users.nickname (User.nickname)",
+              "users.openid (User.openid)",
+              "users.wallet_balance (User.walletBalance)"
+            ]
+          },
+          "reverse": null
+        },
+        {
+          "name": "selectAll",
+          "params": "",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT id, nickname, wallet_balance, create_time FROM users ORDER BY create_time DESC",
+            "tables": [
+              "users"
+            ],
+            "columns": [
+              "users.create_time (User.createTime)",
+              "users.id (User.id)",
+              "users.nickname (User.nickname)",
+              "users.wallet_balance (User.walletBalance)"
+            ]
+          },
+          "reverse": null
+        },
+        {
+          "name": "addBalance",
+          "params": "Long userId, java.math.BigDecimal delta",
+          "sql": {
+            "kind": "UPDATE",
+            "text": "UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + #{delta} WHERE id = #{userId}",
+            "tables": [
+              "users"
+            ],
+            "columns": [
+              "users.id (User.id)",
+              "users.wallet_balance (User.walletBalance)"
+            ]
+          },
+          "reverse": {
+            "direct_callers": [
+              "WalletController#recharge"
+            ],
+            "routes": [
+              {
+                "method": "POST",
+                "path": "/api/v1/wallet/recharge"
+              }
+            ]
+          }
+        },
+        {
+          "name": "selectById",
+          "params": "(MP 内置)",
+          "sql": {
+            "kind": "SELECT",
+            "text": "(MyBatis-Plus 内置 SELECT *)",
+            "tables": [
+              "users"
+            ],
+            "columns": [
+              "users.create_time (User.createTime)",
+              "users.id (User.id)",
+              "users.nickname (User.nickname)",
+              "users.openid (User.openid)",
+              "users.wallet_balance (User.walletBalance)"
+            ],
+            "mp_builtin": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "OrderServiceImpl#create",
+              "WalletController#me"
+            ],
+            "routes": [
+              {
+                "method": "POST",
+                "path": "/api/v1/orders"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/me"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "entities": [
+    {
+      "name": "Message",
+      "table": "messages",
+      "columns": {
+        "id": "id",
+        "conversationId": "conversation_id",
+        "role": "role",
+        "content": "content",
+        "createTime": "create_time"
+      }
+    },
+    {
+      "name": "Order",
+      "table": "orders",
+      "columns": {
+        "id": "id",
+        "userId": "user_id",
+        "title": "title",
+        "amount": "amount",
+        "status": "status",
+        "createTime": "create_time"
+      }
+    },
+    {
+      "name": "User",
+      "table": "users",
+      "columns": {
+        "id": "id",
+        "openid": "openid",
+        "nickname": "nickname",
+        "walletBalance": "wallet_balance",
+        "createTime": "create_time"
+      }
+    }
+  ],
+  "call_graph": {
+    "OrderController#create": [
+      {
+        "kind": "component",
+        "class": "OrderServiceImpl",
+        "method": "create",
+        "is_db_write": false
+      }
+    ],
+    "OrderController#listMy": [
+      {
+        "kind": "component",
+        "class": "OrderServiceImpl",
+        "method": "listMyOrders",
+        "is_db_write": false
+      }
+    ],
+    "OrderServiceImpl#create": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectById",
+        "is_db_write": false
+      },
+      {
+        "kind": "mapper",
+        "class": "OrderMapper",
+        "method": "insert",
+        "is_db_write": true
+      }
+    ],
+    "OrderServiceImpl#listMyOrders": [
+      {
+        "kind": "mapper",
+        "class": "OrderMapper",
+        "method": "selectMyOrders",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#me": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectById",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#recharge": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "addBalance",
+        "is_db_write": true
+      }
+    ]
+  },
+  "transactional": {
+    "seeds": [
+      "OrderServiceImpl#create"
+    ],
+    "inside_closure": [
+      "OrderMapper#insert",
+      "OrderServiceImpl#create",
+      "UserMapper#selectById"
+    ]
+  },
+  "hidden_entries": []
+}
