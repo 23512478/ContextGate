@@ -553,10 +553,6 @@ _WRAPPER_DECL_RE = re.compile(
 _WRAPPER_PARAM_RE = re.compile(
     r"\b(LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)"
     r"\s*<\s*(\w+)\s*>\s+(\w+)")
-# 消费点：BaseMapper / IService 上接收 Wrapper 的方法
-_CONSUME_VERBS = {"selectlist", "selectone", "selectcount", "selectpage", "selectmaps",
-                  "selectmapspage", "selectobjs", "list", "getone", "count", "page",
-                  "remove", "delete", "update", "saveorupdate", "exists"}
 
 
 def _split_statements(body):
@@ -590,17 +586,21 @@ def _split_statements(body):
     return stmts
 
 
-def _wrapper_defuse(owner, body, params, cls, ent_by_simple, table_to_entity):
+def _wrapper_defuse(owner, body, params, cls, helper_chains, ent_by_simple, table_to_entity):
     """Wrapper 拆成变量跨语句链式调用的 def-use 重建：
       定义   XxxWrapper<Entity> w = new XxxWrapper<>()（实体：构造泛型 > 声明泛型）
       参数   方法签名带 XxxWrapper<Entity> w —— 参数当已定义变量（调用方在
              方法外拼的链不跨方法追，合成 SQL 只含方法内条件）
+      helper lqw = buildXxx(...) —— 调用本类返回 Wrapper 的方法，helper 方法体
+             里的条件链文本归并进消费点的 region
       续链   w.like(...) / w = w.eq(...)（if/for 分支内续链保守计入，宁多报不漏报）
       拷贝   w2 = w → 同一底层对象，链表共享
       消费   orderMapper.selectList(w) 等——把该变量攒下的全部链文本拼成 region
     交给 _wrapper_record 合成 SQL；消费后链重置（变量可复用）。
-    只支持单变量直链：跨方法传递不追。"""
+    只支持同类内直链：跨类传递、helper 再调 helper 不追。"""
     ent, chains, recs = {}, {}, []
+    # 消费点合法接收者：本类声明的字段 + ServiceImpl 继承的 baseMapper
+    field_names = set(cls.get("fields") or {}) | {"baseMapper"}
     # Wrapper 参数当已定义变量
     for pm in _WRAPPER_PARAM_RE.finditer(params or ""):
         ent[pm.group(3)] = (pm.group(1), pm.group(2))
@@ -618,6 +618,13 @@ def _wrapper_defuse(owner, body, params, cls, ent_by_simple, table_to_entity):
                 ent[var] = (wtype, entity)
                 chains[var] = [stmt]
                 continue
+        # helper 返回值赋给变量：lqw = buildXxx(...) / this.buildXxx(...)
+        hm2 = re.search(r"(\w+)\s*=\s*(?:this\s*\.\s*)?(\w+)\s*\(", stmt)
+        if hm2 and hm2.group(1) not in ent and hm2.group(2) in helper_chains:
+            wtype, entity, helper_text = helper_chains[hm2.group(2)]
+            ent[hm2.group(1)] = (wtype, entity)
+            chains[hm2.group(1)] = [helper_text]
+            continue
         # 拷贝别名：w2 = w（含 `Type w2 = w;` 声明式）→ Java 里两个引用指向
         # 同一 Wrapper 对象，链表共享：任一变量后续续链都进同一个链
         am = re.search(r"(\w+)\s*=\s*(\w+)\s*$", stmt)
@@ -633,15 +640,30 @@ def _wrapper_defuse(owner, body, params, cls, ent_by_simple, table_to_entity):
                 # 续链 / 重新赋值续链
                 chains[var].append(stmt)
                 continue
-            # 消费点：接收者调用了消费动词，且变量作为参数传入
-            vm = re.search(r"\.\s*(\w+)\s*\(", stmt)
-            if vm and vm.group(1).lower() in _CONSUME_VERBS:
+            # 消费点：变量作为参数传给 mapper/service 方法。接收者须是本类字段
+            # 或 this/baseMapper（ServiceImpl 继承字段）——方法名不必是标准动词，
+            # RuoYi-Vue-Plus 这类项目大量自定义 selectDeptList(wrapper) 方法
+            cons = re.search(rf"\b(\w+)\s*\.\s*\w+\s*\(((?:[^()]|\([^()]*\))*)\)", stmt)
+            if cons and (cons.group(1) in field_names or cons.group(1) == "this") \
+                    and re.search(rf"\b{re.escape(var)}\b", cons.group(2)):
                 region = ";\n".join(chains[var] + [stmt])
                 rec = _wrapper_record(owner, region, wtype, entity,
                                       ent_by_simple, table_to_entity)
                 if rec:
                     recs.append(rec)
                 chains[var] = []  # 消费后链重置，变量可复用
+        # helper 结果直接作为参数传给 mapper/service（不落变量）：
+        # deptMapper.selectPageDeptList(pageQuery.build(), buildQueryWrapper(bo))
+        helper_used = next((n for n in helper_chains
+                            if re.search(r"\b" + re.escape(n) + r"\s*\(", stmt)), None)
+        if helper_used:
+            wtype, entity, helper_text = helper_chains[helper_used]
+            cons = re.search(r"\b(\w+)\s*\.\s*\w+\s*\(", stmt)
+            if cons and (cons.group(1) in field_names or cons.group(1) == "this"):
+                rec = _wrapper_record(owner, helper_text + ";\n" + stmt,
+                                      wtype, entity, ent_by_simple, table_to_entity)
+                if rec:
+                    recs.append(rec)
     return recs
 
 
@@ -742,6 +764,14 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
             service_entity[c["name"]] = sm.group(2)
 
     for c in classes.values():
+        # 本类返回类型为 Wrapper 的方法（条件构建 helper）：其方法体是链文本，
+        # 调用方 `lqw = buildXxx(...)` 的消费点要把这段条件归并进合成 SQL
+        helper_chains = {}
+        for meth in c["methods"]:
+            wm = re.match(r"(\w*Wrapper)\s*<\s*(\w+)\s*>\s*$", meth.get("ret_type") or "")
+            if wm and meth.get("body_raw"):
+                helper_chains[meth["name"]] = (wm.group(1), wm.group(2), meth["body_raw"])
+
         for meth in c["methods"]:
             body = meth.get("body_raw") or ""
             if not body:
@@ -813,9 +843,18 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                                       wtype, ent_name, ent_by_simple, table_to_entity)
                 if rec:
                     out.append(rec)
-            # 2c) 跨语句 def-use：Wrapper 拆成变量/方法参数，定义/续链/消费分离的写法
+            # 2b') Mapper 接口 default 方法：this.lambda().select(...).list()
+            #      （MP 的 BaseMapper.lambda() 链入口，实体取 Mapper 泛型）
+            if c.get("is_mapper") and c.get("base_entity"):
+                for lm in re.finditer(r"\.\s*lambda\s*\(\s*\)", body):
+                    rec = _wrapper_record(owner, _stmt_to_semicolon(body, lm.start()),
+                                          "LambdaQueryWrapper", c["base_entity"],
+                                          ent_by_simple, table_to_entity)
+                    if rec:
+                        out.append(rec)
+            # 2c) 跨语句 def-use：Wrapper 拆成变量/方法参数/helper 返回值，定义/续链/消费分离的写法
             out.extend(_wrapper_defuse(owner, body, meth.get("params"),
-                                       c, ent_by_simple, table_to_entity))
+                                       c, helper_chains, ent_by_simple, table_to_entity))
 
             # ---- 3) MBG Example 动态条件 ----
             out.extend(_example_defuse(owner, body, ent_by_simple, table_to_entity))
@@ -1014,6 +1053,7 @@ def scan_methods(text, class_name):
             "close": close_p,
             "end_char": text[j],
             "term": j,
+            "header": header,
         })
     return out
 
@@ -1155,9 +1195,10 @@ def parse_java(path):
             cols[fname] = explicit.get(fname, camel_to_snake(fname))
         entity_columns = cols
 
-    # Mapper 泛型实体：extends BaseMapper<BizOrder>
+    # Mapper 泛型实体：extends BaseMapper<BizOrder> / BaseMapperPlus<SysDept, SysDeptVo>
+    # （RuoYi-Vue-Plus 等项目用 BaseMapperPlus 扩展，首个泛型仍是实体）
     base_entity = None
-    bm = re.search(r"BaseMapper<(\w+)>", extends)
+    bm = re.search(r"BaseMapper\w*\s*<\s*(\w+)", extends)
     if bm:
         base_entity = bm.group(1)
 
@@ -1196,6 +1237,8 @@ def parse_java(path):
         methods.append({
             "name": mname,
             "params": params,
+            # 返回类型：头部最后一个 token（构造器只有修饰符，无关紧要）
+            "ret_type": (mi.get("header") or "").split()[-1] if mi.get("header") else "",
             "ann_raw": m_ann_raw,
             "http": http,
             "sql": sql,

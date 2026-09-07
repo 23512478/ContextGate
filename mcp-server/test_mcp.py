@@ -301,6 +301,23 @@ def main():
         assert "users.nickname (User.nickname)" in out_sub, \
             "无 Java 接口方法的 XML 子查询语句也应可反查"
 
+        # 7.29 跨方法 Wrapper 构建：lqw = buildOrderWrapper(status)，helper 条件归并到消费点
+        out_helper = call_tool(proc, "trace_call", {"query": "GET /api/v1/orders/search-helper"})
+        assert "(MP Wrapper)" in out_helper and "status = ?" in out_helper and "title = ?" in out_helper, \
+            "helper 方法体里的条件应归并进消费方法的合成 SQL"
+        out_helper_imp = call_tool(proc, "impact", {"entity": "Order", "field": "title"})
+        assert "searchByHelper" in out_helper_imp, \
+            "helper 构建条件触碰的 title 应计入 Order 影响面"
+
+        # 7.30 Mapper default 方法 this.lambda() 链：select+eq 合成，实体取 Mapper 泛型
+        print("\n" + "=" * 70)
+        print("### find_sql('selectByNicknameLambda')  ← mapper default 方法 lambda() 链")
+        print("-" * 70)
+        out_lamb = call_tool(proc, "find_sql", {"query": "selectByNicknameLambda"})
+        print(out_lamb)
+        assert "（MP Wrapper）" in out_lamb and "SELECT id, nickname FROM users WHERE nickname = ?" in out_lamb, \
+            "mapper default 方法的 lambda() 链应合成 SQL 并能反查"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

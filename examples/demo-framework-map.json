@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-08T05:28:53",
+    "generated_at": "2026-09-08T05:50:31",
     "classes": 22,
     "controllers": 5,
     "mappers": 5,
     "entities": 5,
-    "routes": 23
+    "routes": 25
   },
   "routes": [
     {
@@ -83,6 +83,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/orders/search-helper",
+      "controller": "OrderController",
+      "handler": "searchHelper"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/orders/search-param",
       "controller": "OrderController",
       "handler": "searchParam"
@@ -128,6 +134,12 @@
       "path": "/api/v1/wallet/count",
       "controller": "WalletController",
       "handler": "countUsers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/lambda",
+      "controller": "WalletController",
+      "handler": "byLambda"
     },
     {
       "method": "GET",
@@ -511,6 +523,7 @@
           "reverse": {
             "direct_callers": [
               "OrderServiceImpl#searchByAliasCopy",
+              "OrderServiceImpl#searchByHelper",
               "OrderServiceImpl#searchByTitle",
               "OrderServiceImpl#searchByWrapperParam",
               "OrderServiceImpl#searchOrdersFlexible"
@@ -527,6 +540,10 @@
               {
                 "method": "GET",
                 "path": "/api/v1/orders/search-flexible"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/orders/search-helper"
               },
               {
                 "method": "GET",
@@ -710,6 +727,22 @@
               {
                 "method": "GET",
                 "path": "/api/v1/wallet/search-example"
+              }
+            ]
+          }
+        },
+        {
+          "name": "selectByNicknameLambda",
+          "params": "String nickname",
+          "sql": null,
+          "reverse": {
+            "direct_callers": [
+              "WalletController#byLambda"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/lambda"
               }
             ]
           }
@@ -940,6 +973,14 @@
         "is_db_write": false
       }
     ],
+    "OrderController#searchHelper": [
+      {
+        "kind": "component",
+        "class": "OrderServiceImpl",
+        "method": "searchByHelper",
+        "is_db_write": false
+      }
+    ],
     "OrderController#searchParam": [
       {
         "kind": "component",
@@ -971,6 +1012,20 @@
       }
     ],
     "OrderServiceImpl#searchByAliasCopy": [
+      {
+        "kind": "mapper",
+        "class": "OrderMapper",
+        "method": "selectList",
+        "is_db_write": false
+      }
+    ],
+    "OrderServiceImpl#searchByHelper": [
+      {
+        "kind": "self",
+        "class": "OrderServiceImpl",
+        "method": "buildOrderWrapper",
+        "is_db_write": false
+      },
       {
         "kind": "mapper",
         "class": "OrderMapper",
@@ -1106,6 +1161,14 @@
         "is_db_write": false
       }
     ],
+    "WalletController#byLambda": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectByNicknameLambda",
+        "is_db_write": false
+      }
+    ],
     "WalletController#countUsers": [
       {
         "kind": "mapper",
@@ -1205,6 +1268,27 @@
       "file": "src\\main\\java\\com\\demo\\controller\\WalletController.java"
     },
     {
+      "owner": "UserMapper#selectByNicknameLambda",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT id, nickname FROM users WHERE nickname = ?",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.id (User.id)",
+        "users.nickname (User.nickname)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/wallet/lambda"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\mapper\\UserMapper.java"
+    },
+    {
       "owner": "OrderServiceImpl#searchByTitle",
       "via": "mp-wrapper",
       "kind": "SELECT",
@@ -1300,6 +1384,31 @@
         {
           "method": "GET",
           "path": "/api/v1/orders/search-param"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\OrderServiceImpl.java"
+    },
+    {
+      "owner": "OrderServiceImpl#searchByHelper",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT * FROM orders WHERE status = ? AND title = ?",
+      "tables": [
+        "orders"
+      ],
+      "columns": [
+        "orders.amount (Order.amount)",
+        "orders.create_time (Order.createTime)",
+        "orders.id (Order.id)",
+        "orders.status (Order.status)",
+        "orders.title (Order.title)",
+        "orders.user_id (Order.userId)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/orders/search-helper"
         }
       ],
       "file": "src\\main\\java\\com\\demo\\service\\OrderServiceImpl.java"

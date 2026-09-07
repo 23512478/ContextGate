@@ -74,4 +74,17 @@ public class OrderServiceImpl {
         w.eq(Order::getStatus, 2);
         return orderMapper.selectList(w);
     }
+
+    /** Wrapper 由私有 helper 构建：调用方消费（验证跨方法条件归并）。 */
+    public List<Order> searchByHelper(Integer status) {
+        LambdaQueryWrapper<Order> lqw = buildOrderWrapper(status);
+        return orderMapper.selectList(lqw);
+    }
+
+    private LambdaQueryWrapper<Order> buildOrderWrapper(Integer status) {
+        LambdaQueryWrapper<Order> w = new LambdaQueryWrapper<>();
+        w.eq(Order::getStatus, status);
+        w.like(Order::getTitle, "x");
+        return w;
+    }
 }

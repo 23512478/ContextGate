@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-08 05:28:53
-- 扫描类: 22 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 23 条 | 调用图边: 37 个方法
+- 生成时间: 2026-09-08 05:50:31
+- 扫描类: 22 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 25 条 | 调用图边: 40 个方法
 
 ---
 
@@ -56,6 +56,10 @@
 **OrderController#searchFlexible**
    ├─ OrderServiceImpl#searchOrdersFlexible  （组件/工具）
 
+### `GET /api/v1/orders/search-helper`
+**OrderController#searchHelper**
+   ├─ OrderServiceImpl#searchByHelper  （组件/工具）
+
 ### `GET /api/v1/orders/search-param`
 **OrderController#searchParam**
    ├─ OrderServiceImpl#searchByWrapperParam  （组件/工具）
@@ -95,6 +99,10 @@
 ### `GET /api/v1/wallet/count`
 **WalletController#countUsers**
    ├─ UserMapper#selectCount  （MP 内置）
+
+### `GET /api/v1/wallet/lambda`
+**WalletController#byLambda**
+   ├─ UserMapper#selectByNicknameLambda  （Mapper 方法，SQL 未找到）
 
 ### `GET /api/v1/wallet/me`
 **WalletController#me**
@@ -222,6 +230,9 @@ UserMapper#selectById
 
 > 改 SQL 前必查：上游有多少路由依赖它，动了会炸几个接口。
 
+- **UserMapper#selectByNicknameLambda** ← 1 条路由 
+  - 直接调用者: `WalletController#byLambda`
+  - `GET /api/v1/wallet/lambda`
 - **UserMapper#selectByExample** ← 1 条路由 
   - 直接调用者: `WalletController#searchExample`
   - `GET /api/v1/wallet/search-example`
@@ -278,6 +289,10 @@ UserMapper#selectById
   - `SELECT * FROM users WHERE nickname = ?`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/wallet/search-example`
+- **UserMapper#selectByNicknameLambda** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\mapper\UserMapper.java`)
+  - `SELECT id, nickname FROM users WHERE nickname = ?`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/wallet/lambda`
 - **OrderServiceImpl#searchByTitle** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\OrderServiceImpl.java`)
   - `SELECT * FROM orders WHERE title = ? AND status = ? ORDER BY create_time`
   - 涉及表: `orders`
@@ -294,6 +309,10 @@ UserMapper#selectById
   - `SELECT * FROM orders WHERE status = ?`
   - 涉及表: `orders`
   - 上游路由: `GET /api/v1/orders/search-param`
+- **OrderServiceImpl#searchByHelper** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\OrderServiceImpl.java`)
+  - `SELECT * FROM orders WHERE status = ? AND title = ?`
+  - 涉及表: `orders`
+  - 上游路由: `GET /api/v1/orders/search-helper`
 - **StatsService#topWallets** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
   - `SELECT id, nickname, wallet_balance FROM users ORDER BY wallet_balance DESC LIMIT 10`
   - 涉及表: `users`

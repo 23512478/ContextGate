@@ -53,4 +53,10 @@ public class OrderController {
     public List<Order> searchParam(@RequestParam Integer status) {
         return orderService.searchByWrapperParam(new LambdaQueryWrapper<>());
     }
+
+    /** Wrapper 由 helper 构建入口（验证跨方法条件归并）。 */
+    @GetMapping("/orders/search-helper")
+    public List<Order> searchHelper(@RequestParam Integer status) {
+        return orderService.searchByHelper(status);
+    }
 }

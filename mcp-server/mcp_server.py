@@ -368,6 +368,9 @@ def impact(entity: str, field: str = "", project: str = "") -> str:
         # 事务路径上的方法（种子 + 闭包内）：用于给每个调用者单独标注，
         # 避免点级标记读起来像"所有调用者都在事务里"
         tx_nodes = tx_inside | set(data()["transactional"]["seeds"])
+        # 内嵌 SQL 按 owner 索引：声明的 mapper 方法没有注解/XML SQL 时，
+        # 其动态条件（Wrapper 链等）记录在这里，兜底时替代"列未知"
+        inline_by_owner = {r["owner"]: r for r in data().get("inline_sql", [])}
         own_mapper_set = set(own_mappers)
         affected_sqls = []      # (mapper#method, sql, in_tx)  自定义 SQL（含跨表 JOIN 触碰）
         mp_sites = []           # (key, sql|None, [callers])  MP 内置调用点（事务标记逐调用者给）
@@ -392,11 +395,11 @@ def impact(entity: str, field: str = "", project: str = "") -> str:
                 else:
                     affected_sqls.append((key, sql, key in tx_inside))
             elif not sql and info["mapper_class"] in own_mapper_set:
-                # 只有本实体专属 Mapper 的 MP 内置方法才走"列未知"兜底
-                # （实体无 @TableName / entity_columns 缺失 → MP 合成 SQL 为 None）
+                # 本实体专属 Mapper 里没有静态 SQL 的方法：
+                # 优先用内嵌 SQL 记录（Wrapper 动态链的合成结果），实在没有才列未知
                 callers = rev.get("direct_callers", [])
                 if callers:
-                    mp_sites.append((key, None, callers))
+                    mp_sites.append((key, inline_by_owner.get(key), callers))
                     mp_routes.extend(rev.get("routes", []))
 
         # 内嵌 SQL（JdbcTemplate / Wrapper）：同样按表/列过滤

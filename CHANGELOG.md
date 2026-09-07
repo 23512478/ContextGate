@@ -15,6 +15,8 @@
 - MyBatis Generator `Example` 动态条件解析（v1）：`andXxxEqualTo` 等条件方法解码列名/操作符，`selectByExample`/`countByExample`/`deleteByExample`/`updateByExample` 消费合成 WHERE；`*ByExample` 方法纳入内置方法合成
 - Wrapper 作方法参数：方法签名带 `XxxWrapper<Entity>` 参数时按已定义变量分析方法内续链与消费，合成 SQL 标注在消费方法（方法外拼的条件不跨方法追）
 - XML 懒加载子查询链接：`<association select=...>`/`<collection select=...>` 记录为 `sub_selects`，trace_call / find_sql 标注 N+1 子查询；无 Java 接口方法声明的 XML 语句也纳入地图
+- Wrapper 条件构建 helper：`lqw = buildXxx(...)` 调用本类返回 Wrapper 的方法时，helper 方法体里的条件链归并进消费点；helper 结果直接作为参数传参（`mapper.method(buildXxx(...))`）同样支持。消费点判定放宽为「接收者是本类字段 / this / baseMapper」，自定义 mapper 方法名（如 `selectDeptList(wrapper)`）不再要求标准动词（RuoYi-Vue-Plus 实测：内嵌 SQL 识别 0 → 46 条）
+- Mapper 接口 default 方法的 `this.lambda()` 动态链（实体取 Mapper 泛型）；`BaseMapperPlus<T, V>` 等扩展泛型的实体识别
 - MCP Server 多项目模式：新增 `CODECONTEXT_MAPS_DIR` 地图目录，`refresh_map` 按项目目录名自动注册，三个查询工具新增 `project` 参数，新增 `list_maps` 工具
 
 ### 修复

@@ -38,7 +38,7 @@ Spring Boot + MyBatis 项目的调用关系大量是**隐式约定**：一个 HT
 - **一键刷新**：代码改完让 AI 调 `refresh_map`，秒级重跑分析器
 - **多项目**：配置 `CODECONTEXT_MAPS_DIR` 后一个 server 管多个项目——`refresh_map` 自动注册、查询工具 `project` 参数切换、`list_maps` 列出全部项目和地图新鲜度
 
-已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`（含 `extends` 继承、`<association>`/`<collection>` 嵌套映射与 `select=` 懒加载子查询链接）/`<sql>`+`<include>`/`<set>`/`<if>`/`<foreach>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参、类级 `static final` 常量及**同类常量互拼折叠**、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链、**Wrapper 拆变量跨语句链式调用**含拷贝别名与方法参数）、实体映射（`@TableName/@TableField` **或** model/domain/entity 等包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法（count 族标 0 列）、**MyBatis Generator `Example` 动态条件**（`andXxxEqualTo` 链 + `selectByExample` 消费合成 WHERE）、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（21 个 Java 文件 + XML），每种规则都有夹具和回归断言。
+已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`（含 `extends` 继承、`<association>`/`<collection>` 嵌套映射与 `select=` 懒加载子查询链接）/`<sql>`+`<include>`/`<set>`/`<if>`/`<foreach>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参、类级 `static final` 常量及**同类常量互拼折叠**、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链、**Wrapper 拆变量跨语句链式调用**含拷贝别名、方法参数、**helper 方法条件归并**与 Mapper default 方法 `this.lambda()` 链）、实体映射（`@TableName/@TableField` **或** model/domain/entity 等包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法（count 族标 0 列）、**MyBatis Generator `Example` 动态条件**（`andXxxEqualTo` 链 + `selectByExample` 消费合成 WHERE）、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（21 个 Java 文件 + XML），每种规则都有夹具和回归断言。
 
 ## 目录结构
 
@@ -125,7 +125,7 @@ python mcp-server/test_mcp.py
 
 - **正则级解析，不是真 Java AST**：复杂语法（内部类、Lombok 生成方法等）可能漏，遇到再补规则
 - **MyBatis-Plus 内置方法：行读取标全列、count 族标 0 列**——`selectById`/`selectList` 底层就是取整行，标"触碰全部列"是语义事实而非近似；`selectCount`/`count`/`exists`/`countByExample` 是 COUNT，不触碰业务列
-- **Wrapper 跨语句只支持单变量直链**：定义/续链/消费点分离、分支内续链、拷贝别名（`w2 = w`）、Wrapper 作方法参数（方法内消费）都可解析；调用方在方法外拼的条件不跨方法追
+- **Wrapper 跨语句只支持同类内直链**：定义/续链/消费点分离、分支内续链、拷贝别名（`w2 = w`）、Wrapper 作方法参数、本类 helper 方法构建（`lqw = buildXxx(...)`，条件归并到消费点）都可解析；跨类传递、helper 套 helper、调用方在方法外拼的条件不追
 - **SQL 常量支持字面量拼接、同类常量互拼折叠与跨类单常量引用**；运行期拼参（`"..." + variable`）、跨类常量互拼静态拿不到
 - **MBG `Example` 动态条件（v1）**：条件方法与消费方法可合成 WHERE；AND/OR 按出现顺序平铺（criteria 分组语义不还原），Example 作方法参数传入不追
 

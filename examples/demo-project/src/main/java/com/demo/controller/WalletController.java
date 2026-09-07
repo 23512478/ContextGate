@@ -35,6 +35,11 @@ public class WalletController {
         return userMapper.selectCount(null);
     }
 
+    @GetMapping("/wallet/lambda")
+    public List<User> byLambda(@RequestParam String nickname) {
+        return userMapper.selectByNicknameLambda(nickname);
+    }
+
     /** MBG Example 动态条件：criteria.andXxxYyy 链 + selectByExample。 */
     @GetMapping("/wallet/search-example")
     public List<User> searchExample(@RequestParam String nickname) {

@@ -26,4 +26,12 @@ public interface UserMapper extends BaseMapper<User> {
 
     // MBG 风格：SQL 由 Example 动态条件合成（无注解 SQL）
     List<User> selectByExample(UserExample example);
+
+    // MP 的 lambda() 链入口：mapper default 方法内部构建动态查询
+    default List<User> selectByNicknameLambda(String nickname) {
+        return this.lambda()
+                .select(User::getId, User::getNickname)
+                .eq(User::getNickname, nickname)
+                .list();
+    }
 }
