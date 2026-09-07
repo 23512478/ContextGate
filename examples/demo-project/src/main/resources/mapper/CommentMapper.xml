@@ -92,4 +92,18 @@
         GROUP BY c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id
     </select>
 
+    <!-- 懒加载子查询：<association select=...> 引用同命名空间的子查询语句（N+1 模式） -->
+    <resultMap id="commentLazyMap" type="com.demo.entity.Comment" extends="commentResultMap">
+        <association property="user" javaType="com.demo.entity.User" column="user_id"
+                     select="selectUserById"/>
+    </resultMap>
+    <select id="selectLazy" resultMap="commentLazyMap">
+        SELECT id, order_id, user_id, content, rating, create_time
+        FROM comments WHERE rating = #{rating}
+    </select>
+    <!-- 子查询语句：MyBatis 内部调用，无 Java 调用方，靠 sub_selects 链接可见 -->
+    <select id="selectUserById">
+        SELECT id, nickname, openid FROM users WHERE id = #{userId}
+    </select>
+
 </mapper>

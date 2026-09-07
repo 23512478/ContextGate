@@ -230,6 +230,8 @@ def trace_call(query: str, project: str = "") -> str:
                 sql_text = sql_info["text"]
                 short = sql_text if len(sql_text) <= 110 else sql_text[:107] + "..."
                 out_lines.append(f"{prefix}      `{short}`")
+            if sql_info and sql_info.get("sub_selects"):
+                out_lines.append(f"{prefix}  ↳ N+1 子查询: {', '.join(sql_info['sub_selects'])}")
             # 该方法体内写死的 SQL：JdbcTemplate 裸 SQL / MP Wrapper 动态链
             for rec in inline_by_owner.get(node, []):
                 label = {"jdbc-template": "JdbcTemplate", "mp-wrapper": "MP Wrapper",
@@ -309,6 +311,8 @@ def find_sql(query: str, project: str = "") -> str:
             routes = rev.get("routes", [])
             if routes:
                 out.append("- 上游路由: " + ", ".join(f"`{r['method']} {r['path']}`" for r in routes))
+            if sql.get("sub_selects"):
+                out.append("- N+1 子查询: " + ", ".join(f"`{s}`" for s in sql["sub_selects"]))
             out.append("")
         for rec in inline_hits:
             label = {"jdbc-template": "JdbcTemplate", "mp-wrapper": "MP Wrapper",
@@ -323,6 +327,8 @@ def find_sql(query: str, project: str = "") -> str:
             if rec.get("routes"):
                 out.append("- 上游路由: " + ", ".join(
                     f"`{r['method']} {r['path']}`" for r in rec["routes"]))
+            if rec.get("sub_selects"):
+                out.append("- N+1 子查询: " + ", ".join(f"`{s}`" for s in rec["sub_selects"]))
             out.append("")
         return "\n".join(out)
     except Exception as e:

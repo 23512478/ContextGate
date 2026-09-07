@@ -68,4 +68,10 @@ public class OrderServiceImpl {
         w2.like(Order::getTitle, keyword);
         return orderMapper.selectList(w2);
     }
+
+    /** Wrapper 作方法参数：方法内续链并消费（合成 SQL 含方法内条件）。 */
+    public List<Order> searchByWrapperParam(LambdaQueryWrapper<Order> w) {
+        w.eq(Order::getStatus, 2);
+        return orderMapper.selectList(w);
+    }
 }

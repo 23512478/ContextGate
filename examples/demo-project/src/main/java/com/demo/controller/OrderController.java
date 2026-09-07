@@ -47,4 +47,10 @@ public class OrderController {
     public List<Order> searchAlias(@RequestParam String keyword) {
         return orderService.searchByAliasCopy(keyword);
     }
+
+    /** Wrapper 作方法参数入口（验证参数当已定义变量）。 */
+    @GetMapping("/orders/search-param")
+    public List<Order> searchParam(@RequestParam Integer status) {
+        return orderService.searchByWrapperParam(new LambdaQueryWrapper<>());
+    }
 }

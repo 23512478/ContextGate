@@ -282,6 +282,25 @@ def main():
         assert "searchExample" in out_nick_example, \
             "Example 条件列 nickname 应计入 User 影响面"
 
+        # 7.27 Wrapper 作方法参数：参数当已定义变量，方法内续链+消费归消费方法
+        out_param = call_tool(proc, "trace_call", {"query": "GET /api/v1/orders/search-param"})
+        assert "(MP Wrapper)" in out_param and "status = ?" in out_param, \
+            "Wrapper 参数应在方法内续链并消费，合成 SQL 标在消费方法"
+        out_param_imp = call_tool(proc, "impact", {"entity": "Order", "field": "status"})
+        assert "searchByWrapperParam" in out_param_imp, \
+            "Wrapper 参数方法内条件列 status 应计入 Order 影响面"
+
+        # 7.28 XML 懒加载子查询：<association select=...> 应标注 N+1，子查询语句本身可见
+        out_lazy = call_tool(proc, "find_sql", {"query": "selectLazy"})
+        assert "N+1 子查询" in out_lazy and "selectUserById" in out_lazy, \
+            "懒加载子查询链接应在 find_sql 标注"
+        out_lazy_chain = call_tool(proc, "trace_call", {"query": "GET /api/v1/comments/lazy"})
+        assert "N+1 子查询" in out_lazy_chain and "selectUserById" in out_lazy_chain, \
+            "懒加载子查询应在调用链上标注"
+        out_sub = call_tool(proc, "find_sql", {"query": "selectUserById"})
+        assert "users.nickname (User.nickname)" in out_sub, \
+            "无 Java 接口方法的 XML 子查询语句也应可反查"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-08 04:55:40
-- 扫描类: 21 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 21 条 | 调用图边: 34 个方法
+- 生成时间: 2026-09-08 05:09:05
+- 扫描类: 21 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 23 条 | 调用图边: 37 个方法
 
 ---
 
@@ -11,6 +11,10 @@
 ### `GET /api/v1/comments/brief/{userId}`
 **CommentController#brief**
    ├─ CommentMapper#selectBrief  （Mapper 方法，SQL 未找到）
+
+### `GET /api/v1/comments/lazy/{rating}`
+**CommentController#lazy**
+   ├─ CommentMapper#selectLazy  （Mapper 方法，SQL 未找到）
 
 ### `GET /api/v1/comments/order/{orderId}`
 **CommentController#listByOrder**
@@ -51,6 +55,10 @@
 ### `GET /api/v1/orders/search-flexible`
 **OrderController#searchFlexible**
    ├─ OrderServiceImpl#searchOrdersFlexible  （组件/工具）
+
+### `GET /api/v1/orders/search-param`
+**OrderController#searchParam**
+   ├─ OrderServiceImpl#searchByWrapperParam  （组件/工具）
 
 ### `GET /api/v1/products`
 **ProductController#list**
@@ -235,6 +243,9 @@ UserMapper#selectById
 - **CommentMapper#selectWithUser** ← 1 条路由 
   - 直接调用者: `CommentController#withUser`
   - `GET /api/v1/comments/with-user/{orderId}`
+- **CommentMapper#selectLazy** ← 1 条路由 
+  - 直接调用者: `CommentController#lazy`
+  - `GET /api/v1/comments/lazy/{rating}`
 - **CommentMapper#selectDetail** ← 1 条路由 
   - 直接调用者: `CommentController#detail`
   - `GET /api/v1/comments/{id}`
@@ -279,6 +290,10 @@ UserMapper#selectById
   - `SELECT * FROM orders WHERE status = ? AND title = ?`
   - 涉及表: `orders`
   - 上游路由: `GET /api/v1/orders/search-alias`
+- **OrderServiceImpl#searchByWrapperParam** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\OrderServiceImpl.java`)
+  - `SELECT * FROM orders WHERE status = ?`
+  - 涉及表: `orders`
+  - 上游路由: `GET /api/v1/orders/search-param`
 - **StatsService#topWallets** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
   - `SELECT id, nickname, wallet_balance FROM users ORDER BY wallet_balance DESC LIMIT 10`
   - 涉及表: `users`

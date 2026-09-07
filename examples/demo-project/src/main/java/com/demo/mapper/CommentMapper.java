@@ -29,4 +29,7 @@ public interface CommentMapper extends BaseMapper<Comment> {
 
     // 对应 XML <select id="selectWithUser">：association/collection 嵌套映射
     List<Comment> selectWithUser(Long orderId);
+
+    // 对应 XML <select id="selectLazy">：association 懒加载子查询（N+1）
+    Comment selectLazy(Integer rating);
 }

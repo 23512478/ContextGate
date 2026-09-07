@@ -293,13 +293,15 @@ def _expand_foreach(raw_xml):
 
 def _collect_result_map(rm):
     """递归收集一个 <resultMap> 的列映射。
-    返回 (rtype, col_prop, nested)：
+    返回 (rtype, col_prop, nested, sub_selects)：
       col_prop = {column: property}    顶层 id/result（归因给 resultMap type 实体）
       nested   = [(column, property, 嵌套类型简单名)]
                                        association/collection 里的映射（归因给
-                                       javaType/ofType 对应实体，可能是另一张表）"""
+                                       javaType/ofType 对应实体，可能是另一张表）
+      sub_selects = [select id, ...]   <association select=...>/<collection select=...>
+                                       懒加载子查询（N+1 模式），供调用链标注"""
     rtype = (rm.get("type") or "").rsplit(".", 1)[-1]
-    col_prop, nested = {}, []
+    col_prop, nested, subs = {}, [], []
 
     def walk(node, ntype=None):
         for el in node:
@@ -313,6 +315,9 @@ def _collect_result_map(rm):
                 elif p:
                     col_prop[c] = p
             elif tag in ("association", "collection"):
+                sel = el.get("select")
+                if sel:
+                    subs.append(sel)
                 sub_type = (el.get("javaType") or el.get("ofType") or "").rsplit(".", 1)[-1]
                 if not sub_type:
                     continue  # 无法确定嵌套类型，放弃归因
@@ -322,7 +327,7 @@ def _collect_result_map(rm):
                 walk(el, sub_type)
 
     walk(rm)
-    return rtype, col_prop, nested
+    return rtype, col_prop, nested, subs
 
 
 def _parse_xml_file(path, table_to_entity, entity_by_simple):
@@ -358,17 +363,18 @@ def _parse_xml_file(path, table_to_entity, entity_by_simple):
             return resolved[rid]
         info = raw_maps.get(rid)
         if not info or rid in chain:
-            return ("", {}, [])
-        rtype, cols, nested = info
+            return ("", {}, [], [])
+        rtype, cols, nested, subs = info
         ext = rm_extends.get(rid)
         if ext and ext in raw_maps:
-            prtype, pcols, pnested = resolve_rm(ext, chain + (rid,))
+            prtype, pcols, pnested, psubs = resolve_rm(ext, chain + (rid,))
             rtype = rtype or prtype
             merged = dict(pcols)
             merged.update(cols)
             cols = merged
             nested = pnested + nested
-        resolved[rid] = (rtype, cols, nested)
+            subs = psubs + subs
+        resolved[rid] = (rtype, cols, nested, subs)
         return resolved[rid]
 
     for rid in raw_maps:
@@ -393,8 +399,9 @@ def _parse_xml_file(path, table_to_entity, entity_by_simple):
             tables = list(dict.fromkeys(t.lower() for t in SQL_TABLE_RE.findall(sql_text)))
             cols = resolve_sql_columns(sql_text, tables, table_to_entity)
             rm_attr = stmt.get("resultMap")
+            subs = []
             if rm_attr and rm_attr in resolved:
-                rtype, col_prop, nested = resolved[rm_attr]
+                rtype, col_prop, nested, subs = resolved[rm_attr]
                 r_ent = entity_by_simple.get(rtype)
                 if r_ent and r_ent.get("entity_columns"):
                     tname = r_ent["table_name"]
@@ -408,10 +415,12 @@ def _parse_xml_file(path, table_to_entity, entity_by_simple):
                     n_ent = entity_by_simple.get(ntype)
                     if prop and n_ent and n_ent.get("entity_columns"):
                         cols.append(f"{n_ent['table_name']}.{c} ({n_ent['name']}.{prop})")
-            out[f"{mapper_class}#{mid}"] = {
-                "kind": kind, "text": sql_text, "tables": tables,
-                "columns": sorted(set(cols)), "mp_builtin": False,
-            }
+            rec = {"kind": kind, "text": sql_text, "tables": tables,
+                   "columns": sorted(set(cols)), "mp_builtin": False}
+            if subs:
+                # 懒加载子查询（N+1）：记录引用的子查询语句 id，供调用链标注
+                rec["sub_selects"] = list(dict.fromkeys(subs))
+            out[f"{mapper_class}#{mid}"] = rec
     return out
 
 
@@ -540,6 +549,10 @@ _WRAPPER_DECL_RE = re.compile(
     r"(?:final\s+)?(\w+)(?:\s*<\s*(\w+)\s*>)?\s+(\w+)\s*=\s*new\s+"
     r"(LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)"
     r"\s*(?:<\s*(\w+)?\s*>)?\s*\(")
+# 方法签名里的 Wrapper 参数：LambdaQueryWrapper<Order> w（参数当已定义变量）
+_WRAPPER_PARAM_RE = re.compile(
+    r"\b(LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)"
+    r"\s*<\s*(\w+)\s*>\s+(\w+)")
 # 消费点：BaseMapper / IService 上接收 Wrapper 的方法
 _CONSUME_VERBS = {"selectlist", "selectone", "selectcount", "selectpage", "selectmaps",
                   "selectmapspage", "selectobjs", "list", "getone", "count", "page",
@@ -577,14 +590,21 @@ def _split_statements(body):
     return stmts
 
 
-def _wrapper_defuse(owner, body, cls, ent_by_simple, table_to_entity):
+def _wrapper_defuse(owner, body, params, cls, ent_by_simple, table_to_entity):
     """Wrapper 拆成变量跨语句链式调用的 def-use 重建：
       定义   XxxWrapper<Entity> w = new XxxWrapper<>()（实体：构造泛型 > 声明泛型）
+      参数   方法签名带 XxxWrapper<Entity> w —— 参数当已定义变量（调用方在
+             方法外拼的链不跨方法追，合成 SQL 只含方法内条件）
       续链   w.like(...) / w = w.eq(...)（if/for 分支内续链保守计入，宁多报不漏报）
+      拷贝   w2 = w → 同一底层对象，链表共享
       消费   orderMapper.selectList(w) 等——把该变量攒下的全部链文本拼成 region
     交给 _wrapper_record 合成 SQL；消费后链重置（变量可复用）。
-    只支持单变量直链：w2 = w 拷贝别名、跨方法传递不追。"""
+    只支持单变量直链：跨方法传递不追。"""
     ent, chains, recs = {}, {}, []
+    # Wrapper 参数当已定义变量
+    for pm in _WRAPPER_PARAM_RE.finditer(params or ""):
+        ent[pm.group(3)] = (pm.group(1), pm.group(2))
+        chains[pm.group(3)] = []
     for raw_stmt in _split_statements(body):
         stmt = raw_stmt.strip()
         if not stmt:
@@ -793,8 +813,9 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                                       wtype, ent_name, ent_by_simple, table_to_entity)
                 if rec:
                     out.append(rec)
-            # 2c) 跨语句 def-use：Wrapper 拆成变量，定义/续链/消费分离的写法
-            out.extend(_wrapper_defuse(owner, body, c, ent_by_simple, table_to_entity))
+            # 2c) 跨语句 def-use：Wrapper 拆成变量/方法参数，定义/续链/消费分离的写法
+            out.extend(_wrapper_defuse(owner, body, meth.get("params"),
+                                       c, ent_by_simple, table_to_entity))
 
             # ---- 3) MBG Example 动态条件 ----
             out.extend(_example_defuse(owner, body, ent_by_simple, table_to_entity))
@@ -1799,6 +1820,14 @@ def main():
                          "reverse": rindex.get(f"{mp['name']}#{bm}")}
                         for bm in sorted(builtin_used.get(mp["name"], set())
                                          - {m["name"] for m in mp["methods"]})
+                    ] + [
+                        # 只有 XML 语句、没有 Java 接口方法声明的（如懒加载子查询）：
+                        # XML 是 SQL 的源头，无接口方法也应可见
+                        {"name": xml_key.rsplit("#", 1)[1], "params": "(XML)",
+                         "sql": rec, "reverse": rindex.get(xml_key)}
+                        for xml_key, rec in sorted(xml_stmts.items())
+                        if xml_key.startswith(mp["name"] + "#")
+                        and xml_key.rsplit("#", 1)[1] not in {m["name"] for m in mp["methods"]}
                     ]
                 ),
             }

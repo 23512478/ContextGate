@@ -45,4 +45,9 @@ public class CommentController {
     public List<Comment> withUser(@PathVariable Long orderId) {
         return commentMapper.selectWithUser(orderId);
     }
+
+    @GetMapping("/comments/lazy/{rating}")
+    public Comment lazy(@PathVariable Integer rating) {
+        return commentMapper.selectLazy(rating);
+    }
 }

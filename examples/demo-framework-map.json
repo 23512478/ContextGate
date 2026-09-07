@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-08T04:55:40",
+    "generated_at": "2026-09-08T05:09:05",
     "classes": 21,
     "controllers": 5,
     "mappers": 5,
     "entities": 5,
-    "routes": 21
+    "routes": 23
   },
   "routes": [
     {
@@ -14,6 +14,12 @@
       "path": "/api/v1/comments/brief/{userId}",
       "controller": "CommentController",
       "handler": "brief"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/comments/lazy/{rating}",
+      "controller": "CommentController",
+      "handler": "lazy"
     },
     {
       "method": "GET",
@@ -74,6 +80,12 @@
       "path": "/api/v1/orders/search-flexible",
       "controller": "OrderController",
       "handler": "searchFlexible"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/orders/search-param",
+      "controller": "OrderController",
+      "handler": "searchParam"
     },
     {
       "method": "GET",
@@ -328,6 +340,59 @@
               }
             ]
           }
+        },
+        {
+          "name": "selectLazy",
+          "params": "Integer rating",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT id, order_id, user_id, content, rating, create_time FROM comments WHERE rating = #{rating}",
+            "tables": [
+              "comments"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.create_time (Comment.createTime)",
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)",
+              "comments.user_id (Comment.userId)",
+              "users.user_id (User.user)"
+            ],
+            "mp_builtin": false,
+            "sub_selects": [
+              "selectUserById"
+            ]
+          },
+          "reverse": {
+            "direct_callers": [
+              "CommentController#lazy"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/comments/lazy/{rating}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "selectUserById",
+          "params": "(XML)",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT id, nickname, openid FROM users WHERE id = #{userId}",
+            "tables": [
+              "users"
+            ],
+            "columns": [
+              "users.id (User.id)",
+              "users.nickname (User.nickname)",
+              "users.openid (User.openid)"
+            ],
+            "mp_builtin": false
+          },
+          "reverse": null
         }
       ]
     },
@@ -447,6 +512,7 @@
             "direct_callers": [
               "OrderServiceImpl#searchByAliasCopy",
               "OrderServiceImpl#searchByTitle",
+              "OrderServiceImpl#searchByWrapperParam",
               "OrderServiceImpl#searchOrdersFlexible"
             ],
             "routes": [
@@ -461,6 +527,10 @@
               {
                 "method": "GET",
                 "path": "/api/v1/orders/search-flexible"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/orders/search-param"
               }
             ]
           }
@@ -790,6 +860,14 @@
         "is_db_write": false
       }
     ],
+    "CommentController#lazy": [
+      {
+        "kind": "mapper",
+        "class": "CommentMapper",
+        "method": "selectLazy",
+        "is_db_write": false
+      }
+    ],
     "CommentController#listByOrder": [
       {
         "kind": "mapper",
@@ -862,6 +940,14 @@
         "is_db_write": false
       }
     ],
+    "OrderController#searchParam": [
+      {
+        "kind": "component",
+        "class": "OrderServiceImpl",
+        "method": "searchByWrapperParam",
+        "is_db_write": false
+      }
+    ],
     "OrderServiceImpl#create": [
       {
         "kind": "mapper",
@@ -893,6 +979,14 @@
       }
     ],
     "OrderServiceImpl#searchByTitle": [
+      {
+        "kind": "mapper",
+        "class": "OrderMapper",
+        "method": "selectList",
+        "is_db_write": false
+      }
+    ],
+    "OrderServiceImpl#searchByWrapperParam": [
       {
         "kind": "mapper",
         "class": "OrderMapper",
@@ -1181,6 +1275,31 @@
         {
           "method": "GET",
           "path": "/api/v1/orders/search-alias"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\OrderServiceImpl.java"
+    },
+    {
+      "owner": "OrderServiceImpl#searchByWrapperParam",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT * FROM orders WHERE status = ?",
+      "tables": [
+        "orders"
+      ],
+      "columns": [
+        "orders.amount (Order.amount)",
+        "orders.create_time (Order.createTime)",
+        "orders.id (Order.id)",
+        "orders.status (Order.status)",
+        "orders.title (Order.title)",
+        "orders.user_id (Order.userId)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/orders/search-param"
         }
       ],
       "file": "src\\main\\java\\com\\demo\\service\\OrderServiceImpl.java"
