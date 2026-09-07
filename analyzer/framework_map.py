@@ -1089,10 +1089,12 @@ def parse_java(path):
 
     fqn = pkg + "." + cname if pkg else cname
 
-    # 类注解：类声明 { 往前一小段原文
+    # 类注解：类声明 { 往前一小段原文。
+    # 注解名从去注释文本里抽：javadoc/注释里提到 @Mapper、@param 之类
+    # 会被 @\w 正则误收进 class_ann（litemall 实测把启动类误判成 Mapper）
     decl_brace = clean.index("{", cm.start())
     head_raw = raw[max(0, cm.start() - 600):cm.start()]
-    class_ann = " ".join(re.findall(r"@\w[\w.]*", head_raw))
+    class_ann = " ".join(re.findall(r"@\w[\w.]*", strip_code(head_raw)))
 
     body_start = decl_brace
     body_end = match_brace(clean, body_start)
@@ -1221,9 +1223,12 @@ def parse_java(path):
         "table_name": table_name,
         "entity_columns": entity_columns,
         "base_entity": base_entity,
-        "is_controller": "RestController" in class_ann or "Controller" in class_ann and kind == "class",
-        "is_mapper": cname.endswith("Mapper") or "@Mapper" in class_ann,
-        "is_service_impl": cname.endswith("Impl") or "@Service" in class_ann,
+        "is_controller": bool(re.search(r"@RestController\b", class_ann)
+                              or re.search(r"@Controller\b", class_ann)) and kind == "class",
+        # \b 词边界：@MapperScan/@RestControllerAdvice 含 @Mapper/@RestController 子串，
+        # 不加边界会把启动类/异常处理器误判成 Mapper/Controller（litemall 实测踩中）
+        "is_mapper": cname.endswith("Mapper") or bool(re.search(r"@Mapper\b", class_ann)),
+        "is_service_impl": cname.endswith("Impl") or bool(re.search(r"@Service\b", class_ann)),
         "is_entity": table_name is not None,
     }
 

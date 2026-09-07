@@ -20,6 +20,7 @@
 ### 修复
 
 - XML 语句列清单的逗号清理会误伤 `order_id` 这类列名（`order` 前缀被误当 ORDER 关键字），补词边界
+- 类注解名改从去注释文本抽取：javadoc/注释里提及 `@Mapper`、`@param` 等，或 `@MapperScan` 含 `@Mapper` 子串，会把启动类误判成 Mapper、`@RestControllerAdvice` 异常处理器误判成 Controller（litemall/RuoYi 真实项目实测踩中）
 
 ## [v0.1.0] — 2026-09-08
 

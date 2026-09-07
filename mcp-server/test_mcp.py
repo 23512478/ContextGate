@@ -307,6 +307,11 @@ def main():
         print("-" * 70)
         print(call_tool(proc, "refresh_map", {"project_root": PROJECT}))
 
+        # 8.1 回归：@MapperScan 启动类（javadoc 里还提到 @Mapper）不应被误判为 Mapper
+        out_notmapper = call_tool(proc, "find_sql", {"query": "DemoApplication"})
+        assert "没找到匹配" in out_notmapper, \
+            "@MapperScan 启动类不应被误判为 Mapper，javadoc 提及注解也不应触发"
+
         print("\n" + "=" * 70)
         print("[全部通过] MCP Server 工作正常")
     finally:
