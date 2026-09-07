@@ -304,9 +304,12 @@ def impact(entity: str, field: str = "") -> str:
         own_mappers = [m["class"] for m in data()["mappers"] if m.get("base_entity") == ent["name"]]
 
         tx_inside = set(data()["transactional"]["inside_closure"])
+        # 事务路径上的方法（种子 + 闭包内）：用于给每个调用者单独标注，
+        # 避免点级标记读起来像"所有调用者都在事务里"
+        tx_nodes = tx_inside | set(data()["transactional"]["seeds"])
         own_mapper_set = set(own_mappers)
         affected_sqls = []      # (mapper#method, sql, in_tx)  自定义 SQL（含跨表 JOIN 触碰）
-        mp_sites = []           # (key, sql|None, [callers], in_tx)  MP 内置调用点
+        mp_sites = []           # (key, sql|None, [callers])  MP 内置调用点（事务标记逐调用者给）
         mp_routes = []          # MP 方法上游路由
         for key, info in mapper_sql_map().items():
             rev = info["reverse"]
@@ -323,7 +326,7 @@ def impact(entity: str, field: str = "") -> str:
                 if sql.get("mp_builtin"):
                     callers = rev.get("direct_callers", [])
                     if callers:
-                        mp_sites.append((key, sql, callers, key in tx_inside))
+                        mp_sites.append((key, sql, callers))
                         mp_routes.extend(rev.get("routes", []))
                 else:
                     affected_sqls.append((key, sql, key in tx_inside))
@@ -332,7 +335,7 @@ def impact(entity: str, field: str = "") -> str:
                 # （实体无 @TableName / entity_columns 缺失 → MP 合成 SQL 为 None）
                 callers = rev.get("direct_callers", [])
                 if callers:
-                    mp_sites.append((key, None, callers, key in tx_inside))
+                    mp_sites.append((key, None, callers))
                     mp_routes.extend(rev.get("routes", []))
 
         # 内嵌 SQL（JdbcTemplate / Wrapper）：同样按表/列过滤
@@ -368,7 +371,9 @@ def impact(entity: str, field: str = "") -> str:
             out.append("### 受影响的自定义 SQL")
             out.append("")
             for key, sql, in_tx in affected_sqls:
-                tx_flag = "  🔒事务内写" if in_tx else ""
+                # 写在事务里标"事务内写"，读只标"事务内"（回滚边界同样值得关注）
+                tx_flag = ("  🔒事务内写" if in_tx and sql["kind"] != "SELECT"
+                           else "  🔒事务内" if in_tx else "")
                 out.append(f"- **{key}** — @{sql['kind']}{tx_flag}")
                 short = sql["text"] if len(sql["text"]) <= 110 else sql["text"][:107] + "..."
                 out.append(f"  - `{short}`")
@@ -378,7 +383,8 @@ def impact(entity: str, field: str = "") -> str:
             out.append("")
             for rec in inline_hits:
                 label = "JdbcTemplate" if rec["via"] == "jdbc-template" else "MP Wrapper"
-                tx_flag = "  🔒事务内写" if rec.get("in_tx") and rec["kind"] != "SELECT" else ""
+                tx_flag = ("  🔒事务内写" if rec.get("in_tx") and rec["kind"] != "SELECT"
+                           else "  🔒事务内" if rec.get("in_tx") else "")
                 out.append(f"- **{rec['owner']}** — @{rec['kind']}（{label}）{tx_flag}")
                 short = rec["text"] if len(rec["text"]) <= 110 else rec["text"][:107] + "..."
                 out.append(f"  - `{short}`")
@@ -386,13 +392,14 @@ def impact(entity: str, field: str = "") -> str:
         if mp_sites:
             out.append("### MP 内置 CRUD 调用点（SELECT * / 全表写，触碰所有实体列）")
             out.append("")
-            for key, sql, callers, in_tx in mp_sites:
+            for key, sql, callers in mp_sites:
                 tail = (f" 等 {len(callers)} 处" if len(callers) > 6 else "")
-                callers_str = ", ".join(f"`{c}`" for c in callers[:6])
+                # 事务标记跟着调用者走：只有从事务路径调进来的才标 🔒
+                callers_str = ", ".join(
+                    f"`{c}` 🔒" if c in tx_nodes else f"`{c}`" for c in callers[:6])
                 if sql:
-                    tx_flag = "  🔒事务内写" if in_tx else ""
                     ncol = len(sql.get("columns", []))
-                    out.append(f"- **{key}** — @{sql.get('kind','?')}（触碰 {ncol} 列）{tx_flag} ← {callers_str}{tail}")
+                    out.append(f"- **{key}** — @{sql.get('kind','?')}（触碰 {ncol} 列）← {callers_str}{tail}")
                 else:
                     out.append(f"- **{key}** （列未知，实体未解析）← {callers_str}{tail}")
             out.append("")

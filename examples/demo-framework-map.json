@@ -1,7 +1,7 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-08T01:26:33",
+    "generated_at": "2026-09-08T03:22:57",
     "classes": 20,
     "controllers": 5,
     "mappers": 5,
@@ -616,30 +616,6 @@
         "is_db_write": false
       },
       {
-        "kind": "component",
-        "class": "return",
-        "method": "setUserId",
-        "is_db_write": false
-      },
-      {
-        "kind": "component",
-        "class": "return",
-        "method": "setTitle",
-        "is_db_write": false
-      },
-      {
-        "kind": "component",
-        "class": "return",
-        "method": "setAmount",
-        "is_db_write": false
-      },
-      {
-        "kind": "component",
-        "class": "return",
-        "method": "setStatus",
-        "is_db_write": false
-      },
-      {
         "kind": "mapper",
         "class": "OrderMapper",
         "method": "insert",
@@ -753,11 +729,7 @@
       "OrderServiceImpl#create",
       "ProductMapper#deductStock",
       "ProductServiceImpl#purchase",
-      "UserMapper#selectById",
-      "return#setAmount",
-      "return#setStatus",
-      "return#setTitle",
-      "return#setUserId"
+      "UserMapper#selectById"
     ]
   },
   "hidden_entries": [

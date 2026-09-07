@@ -2,6 +2,14 @@
 
 本仓库的所有重要变更都会记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 修复
+
+- 字段扫描会把方法体里的 `return x;` 语句误判为 `return` 类型的伪字段，导致调用树出现 `return#setXxx` 这类假节点（也会混进事务闭包）；已按语句关键字排除
+- `impact` 的事务标记歧义：MP CRUD 调用点的 🔒 改为逐调用者标注（只有从事务路径调进来的才带锁），读操作只标「🔒事务内」不再误标「写」
+- 分析器 stdout 输出粘连缺换行；顺带移除漂移的 `framework_map.py:NNNN` 调试残留
+
 ## [v0.1.0] — 2026-09-08
 
 首个公开发布版本。经过 campus-job（私有项目）、mall、vhr 三个真实 Spring Boot + MyBatis 项目验证，核心链路可用。

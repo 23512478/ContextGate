@@ -743,7 +743,9 @@ def parse_java(path):
         # 分组 1/2 = 带访问修饰符；分组 3/4 = 不带（包私有）
         ftype = fm.group(1) or fm.group(3)
         fname = fm.group(2) or fm.group(4)
-        if fname and ftype:
+        # 无修饰符分支会扫到方法体：`return order;` 会被误判为
+        # 类型是 "return" 的字段，进而把 order.setX() 解析成 return#setX 调用边
+        if fname and ftype and ftype.strip() not in RET_KEYWORDS:
             fields[fname] = simple_type(ftype)
 
     # 实体信息：@TableName + 字段 -> 列名（MP 驼峰转下划线，@TableField 显式覆盖）
@@ -1459,11 +1461,11 @@ def main():
     with open(OUT_JSON, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-    print(f"[OK] 扫描 {len(java_files)} 个 Java 文件，{len(classes)} 个类，{len(routes)} 条路由 - framework_map.py:1196")
-    print(f"[OK] 事务闭包: {len(tx_inside)} 个方法 | 实体: {len(entities)} 个 | - framework_map.py:1197"
+    print(f"[OK] 扫描 {len(java_files)} 个 Java 文件，{len(classes)} 个类，{len(routes)} 条路由")
+    print(f"[OK] 事务闭包: {len(tx_inside)} 个方法 | 实体: {len(entities)} 个 | "
           f"逆向索引: {sum(1 for k in rindex if 'Mapper#' in k)} 个 Mapper 方法")
-    print(f"[OK] 地图已生成: {OUT} - framework_map.py:1199")
-    print(f"[OK] JSON 已生成: {OUT_JSON} - framework_map.py:1200")
+    print(f"[OK] 地图已生成: {OUT}")
+    print(f"[OK] JSON 已生成: {OUT_JSON}")
 
 
 _HEAD_RAW_CACHE = {}

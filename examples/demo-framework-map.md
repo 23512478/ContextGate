@@ -1,7 +1,7 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-08 01:26:33
+- 生成时间: 2026-09-08 03:22:57
 - 扫描类: 20 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 12 条 | 调用图边: 20 个方法
 
 ---
@@ -119,10 +119,6 @@
 OrderMapper#insert
 ProductMapper#deductStock
 UserMapper#selectById
-return#setAmount
-return#setStatus
-return#setTitle
-return#setUserId
 ```
 
 ### 事务内的数据库写操作（✍️ 出错回滚的关键路径）
