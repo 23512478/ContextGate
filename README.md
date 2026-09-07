@@ -8,7 +8,7 @@ AI 编程工具改后端代码时，通常靠全文搜索去猜"这个接口调�
 
 Spring Boot + MyBatis 项目的调用关系大量是**隐式约定**：一个 HTTP 请求要经过 `@RequestMapping` → Controller → `@Autowired` 注入的 Service → `BaseMapper` → SQL，中间没有任何一处显式 import 能把它们串起来。AI 每次都得翻七八个文件才能拼出一条链。
 
-而通用代码索引看不懂这些"框架黑话"。三个最直接的痛点：
+而通用代码索引看不懂这些框架黑话。三个痛点：
 
 1. **改字段不知道会炸哪**：改一个实体字段（如 `walletBalance`）前，要人工找出所有读写它的 SQL 和接口——显式注解 SQL 好查，MyBatis-Plus 的 `selectById`/`insert` 这种隐式全行读写最容易漏。ContextGate 在真实项目上的实测：工具找出的波及路由比人工排查多出约一半，多出来的全是走 MP 内置 CRUD 的链路。
 2. **事务边界靠脑补**：`@Transactional` 闭包里调了哪些写操作、回滚影响什么，工具直接标在调用链上。
