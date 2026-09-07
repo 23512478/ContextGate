@@ -58,7 +58,12 @@ MP_BUILTIN = {
     "save", "saveBatch", "saveOrUpdate", "saveOrUpdateBatch", "updateBatchById",
     "removeById", "removeByIds", "removeByMap", "remove", "getById", "getOne",
     "list", "page", "count", "listByIds", "lambdaQuery", "lambdaUpdate",
+    # MyBatis Generator 风格的 Example 消费方法（无注解/XML SQL，条件由 Example 动态合成）
+    "selectByExample", "countByExample", "deleteByExample",
+    "updateByExample", "updateByExampleSelective",
 }
+# COUNT/EXISTS 族：不取行数据，不触碰业务列
+MP_COUNT_ONLY = {"selectCount", "count", "exists", "countByExample"}
 MP_WRITE = {
     "insert", "deleteById", "deleteByIds", "deleteByMap", "delete", "updateById", "update",
     "save", "saveBatch", "saveOrUpdate", "saveOrUpdateBatch", "updateBatchById",
@@ -220,14 +225,21 @@ def mp_builtin_sql_record(method_name, entity):
         else:
             kind = "UPDATE"
         text = f"(MyBatis-Plus 内置 {kind} 全表写)"
+        cols = [f"{table}.{col} ({entity['name']}.{fname})"
+                for fname, col in entity["entity_columns"].items()]
     else:
-        # 读方法：selectById/selectList/selectOne/selectCount/selectBatchIds/...
-        #       getById/getOne/list/listByIds/count/exists/selectMaps/selectObjs/
-        #       selectPage/selectMapsPage/lambdaQuery/page 等
+        # 读方法：selectById/selectList/selectOne/selectBatchIds/...
+        #       getById/getOne/list/listByIds/selectMaps/selectObjs/
+        #       selectPage/selectMapsPage/lambdaQuery/page 等 → 行读取，全列
         kind = "SELECT"
-        text = "(MyBatis-Plus 内置 SELECT *)"
-    cols = [f"{table}.{col} ({entity['name']}.{fname})"
-            for fname, col in entity["entity_columns"].items()]
+        if method_name in MP_COUNT_ONLY:
+            # COUNT(*)/EXISTS 不取行数据，不触碰业务列（条件列由 Wrapper 分析另算）
+            text = "(MyBatis-Plus 内置 COUNT/EXISTS)"
+            cols = []
+        else:
+            text = "(MyBatis-Plus 内置 SELECT *)"
+            cols = [f"{table}.{col} ({entity['name']}.{fname})"
+                    for fname, col in entity["entity_columns"].items()]
     return {
         "kind": kind,
         "text": text,
@@ -413,11 +425,56 @@ _JDBC_CALL_RE = re.compile(
 _LOCAL_STR_RE = re.compile(
     r"(?:[;{}]\s*|^\s*)(?:final\s+)?String\s+(\w+)\s*=\s*((?:\"(?:[^\"\\]|\\.)*\"\s*(?:\+\s*)?)+)",
     re.MULTILINE)
-# 类级 static String 常量（static final / final static）：JdbcTemplate 常把 SQL 抽成常量字段。
-# 只收纯字符串字面量拼接；引用其他常量的拼接（SQL_A + SQL_B）静态拿不到，不收。
-_STATIC_STR_RE = re.compile(
-    r"\b(?:static\s+(?:final\s+)?|final\s+static\s+)String\s+(\w+)\s*=\s*"
-    r"((?:\"(?:[^\"\\]|\\.)*\"\s*(?:\+\s*)?)+);")
+# 类级 static String 常量（static final / final static）：JdbcTemplate 常把 SQL 抽成常量字段
+_STATIC_STR_DECL_RE = re.compile(
+    r"\b(?:static\s+(?:final\s+)?|final\s+static\s+)String\s+(\w+)\s*=")
+
+
+def _join_sql_literal(s):
+    return re.sub(r"\s+", " ", s.replace(r"\n", " ").replace(r'\"', '"')
+                  .replace(r"\'", "'")).strip()
+
+
+def _static_str_fields(body_raw):
+    """扫类级 static String 常量，返回 {name: [token, ...]}，
+    token = ("lit", 文本) | ("id", 标识符)。
+    右值取到字符串外的首个 ';'；出现方法调用等非「字面量/标识符/+」成分即放弃
+    （运行期拼接静态拿不到）。跨类引用在消费点解析，这里只收 token。"""
+    out = {}
+    for dm in _STATIC_STR_DECL_RE.finditer(body_raw):
+        i, n = dm.end(), len(body_raw)
+        tokens, buf, in_str = [], [], False
+        while i < n:
+            ch = body_raw[i]
+            if in_str:
+                if ch == "\\" and i + 1 < n:
+                    buf.append(body_raw[i:i + 2])
+                    i += 2
+                    continue
+                if ch == '"':
+                    in_str = False
+                    tokens.append(("lit", "".join(buf)))
+                    buf = []
+                else:
+                    buf.append(ch)
+            elif ch == '"':
+                in_str = True
+                buf = []
+            elif ch == ";":
+                break
+            elif ch == "+":
+                pass  # 拼接符
+            elif not ch.isspace():
+                m = re.match(r"\w+", body_raw[i:])
+                if not m:
+                    break  # 方法调用/下标等，放弃该字段
+                tokens.append(("id", m.group(0)))
+                i += len(m.group(0))
+                continue
+            i += 1
+        if tokens:
+            out[dm.group(1)] = tokens
+    return out
 # new LambdaQueryWrapper<User>( / new QueryWrapper<User>(
 _WRAPPER_NEW_RE = re.compile(
     r"new\s+(LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)\s*<\s*(\w+)\s*>\s*\(")
@@ -541,6 +598,13 @@ def _wrapper_defuse(owner, body, cls, ent_by_simple, table_to_entity):
                 ent[var] = (wtype, entity)
                 chains[var] = [stmt]
                 continue
+        # 拷贝别名：w2 = w（含 `Type w2 = w;` 声明式）→ Java 里两个引用指向
+        # 同一 Wrapper 对象，链表共享：任一变量后续续链都进同一个链
+        am = re.search(r"(\w+)\s*=\s*(\w+)\s*$", stmt)
+        if am and am.group(1) not in ent and am.group(2) in ent:
+            ent[am.group(1)] = ent[am.group(2)]
+            chains[am.group(1)] = chains[am.group(2)]
+            continue
         # 与已定义变量相关的语句
         touched = [v for v in ent if re.search(r"\b" + re.escape(v) + r"\b", stmt)]
         for var in touched:
@@ -558,6 +622,87 @@ def _wrapper_defuse(owner, body, cls, ent_by_simple, table_to_entity):
                 if rec:
                     recs.append(rec)
                 chains[var] = []  # 消费后链重置，变量可复用
+    return recs
+
+
+# ---------------------------------------------------------------- MBG Example 动态条件
+
+# MyBatis Generator 的 criteria 方法：andXxxEqualTo / orXxxGreaterThan / ...
+# 方法名里编码了连接词 + 列名 + 操作符，列名按 camel 转下划线后须命中实体列才收
+_EXAMPLE_CRITERIA_RE = re.compile(
+    r"\.\s*(and|or)([A-Z]\w*?)("
+    r"EqualTo|NotEqualTo|GreaterThan|GreaterThanOrEqualTo|LessThan|LessThanOrEqualTo|"
+    r"In|NotIn|Between|NotBetween|Like|NotLike|LikeLeft|LikeRight|IsNull|IsNotNull)\s*\(")
+_EXAMPLE_OP_SQL = {
+    "EqualTo": "=", "NotEqualTo": "<>",
+    "GreaterThan": ">", "GreaterThanOrEqualTo": ">=",
+    "LessThan": "<", "LessThanOrEqualTo": "<=",
+    "In": "IN", "NotIn": "NOT IN",
+    "Between": "BETWEEN", "NotBetween": "NOT BETWEEN",
+    "Like": "LIKE", "NotLike": "NOT LIKE", "LikeLeft": "LIKE", "LikeRight": "LIKE",
+    "IsNull": "IS NULL", "IsNotNull": "IS NOT NULL",
+}
+# 消费动词 → 语句类型（selectByExample 行读取全列；countByExample 只触碰条件列）
+_EXAMPLE_CONSUME = {"selectbyexample": ("SELECT", True), "countbyexample": ("SELECT", False),
+                    "deletebyexample": ("DELETE", False), "updatebyexample": ("UPDATE", True),
+                    "updatebyexampleselective": ("UPDATE", True)}
+
+
+def _example_defuse(owner, body, ent_by_simple, table_to_entity):
+    """MyBatis Generator 的 Example 动态条件：
+    new XxxExample → createCriteria().andXxxEqualTo(...) → selectByExample(example)。
+    AND/OR 按出现顺序平铺（MBG 的 criteria 分组语义不还原，宁近似不漏报）；
+    Example 作方法参数传入的（调用方在别处拼条件）不追。"""
+    ent_m = re.search(r"\b(\w+)Example\s+(\w+)\s*=\s*new\s+\w+Example\b", body)
+    if not ent_m:
+        return []
+    ent = ent_by_simple.get(ent_m.group(1))
+    if not ent or not ent.get("entity_columns"):
+        return []
+    ecols, table = ent["entity_columns"], ent["table_name"]
+    example_vars = {m.group(2) for m in
+                    re.finditer(r"\b(\w+)Example\s+(\w+)\s*=\s*new\s+\w+Example\b", body)}
+
+    conds = []
+    for cm in _EXAMPLE_CRITERIA_RE.finditer(body):
+        field = cm.group(2)[0].lower() + cm.group(2)[1:]
+        col = ecols.get(field)
+        if not col:
+            continue  # 不是本实体列（其他类的 and 方法等），不收
+        conds.append((cm.group(1).upper(), col, _EXAMPLE_OP_SQL[cm.group(3)]))
+    if not conds:
+        return []
+    where_parts = []
+    for i, (conj, col, op) in enumerate(conds):
+        kw = "" if i == 0 else conj
+        where_parts.append((kw + " " if kw else "") + f"{col} {op} ?")
+    where_clause = " ".join(where_parts)
+    cond_cols = [c for _c, c, _o in conds]
+
+    recs = []
+    for xm in re.finditer(
+            r"\.\s*(\w+)\s*\(([^;{}]{0,200})", body):
+        kind, full_cols = _EXAMPLE_CONSUME.get(xm.group(1).lower(), (None, None))
+        if not kind:
+            continue
+        if not any(re.search(r"\b" + re.escape(v) + r"\b", xm.group(2)) for v in example_vars):
+            continue
+        if kind == "SELECT":
+            if xm.group(1).lower().startswith("count"):
+                text = f"SELECT COUNT(*) FROM {table} WHERE {where_clause}"
+                cols = cond_cols  # COUNT 只依赖 WHERE 里的列
+            else:
+                text = f"SELECT * FROM {table} WHERE {where_clause}"
+                cols = [f"{table}.{c} ({ent['name']}.{f})"
+                        for f, c in ecols.items()]  # 行读取，全列
+        elif kind == "DELETE":
+            text = f"DELETE FROM {table} WHERE {where_clause}"
+            cols = cond_cols
+        else:
+            text = f"UPDATE {table} SET ? WHERE {where_clause}"
+            cols = [f"{table}.{c} ({ent['name']}.{f})" for f, c in ecols.items()]
+        recs.append({"owner": owner, "via": "mp-example", "kind": kind, "text": text,
+                     "tables": [table], "columns": sorted(set(cols))})
     return recs
 
 
@@ -650,6 +795,9 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                     out.append(rec)
             # 2c) 跨语句 def-use：Wrapper 拆成变量，定义/续链/消费分离的写法
             out.extend(_wrapper_defuse(owner, body, c, ent_by_simple, table_to_entity))
+
+            # ---- 3) MBG Example 动态条件 ----
+            out.extend(_example_defuse(owner, body, ent_by_simple, table_to_entity))
     return out
 
 
@@ -941,12 +1089,27 @@ def parse_java(path):
         if fname and ftype and ftype.strip() not in RET_KEYWORDS:
             fields[fname] = simple_type(ftype)
 
-    # 类级 static String 常量的字符串值：必须在 body_raw 上收（body_clean 里字面量已被抹白）
+    # 类级 static String 常量的字符串值：必须在 body_raw 上收（body_clean 里字面量已被抹白）。
+    # 右值支持字面量拼接与同类常量互拼（SQL_A + "x"），迭代折叠到不动点；环/未知标识符放弃
     static_strs = {}
-    for ssm in _STATIC_STR_RE.finditer(body_raw):
-        txt = _leading_concat_strings(body_raw, ssm.start(2))
-        if txt:
-            static_strs[ssm.group(1)] = txt
+    pending = _static_str_fields(body_raw)
+    progress = True
+    while pending and progress:
+        progress = False
+        for name, tokens in list(pending.items()):
+            parts, ok = [], True
+            for kind_, val in tokens:
+                if kind_ == "lit":
+                    parts.append(val)
+                elif val in static_strs:
+                    parts.append(static_strs[val])
+                else:
+                    ok = False
+                    break
+            if ok:
+                static_strs[name] = _join_sql_literal(" ".join(parts))
+                del pending[name]
+                progress = True
 
     # 实体信息：@TableName + 字段 -> 列名（MP 驼峰转下划线，@TableField 显式覆盖）
     table_name = None
@@ -1572,7 +1735,8 @@ def main():
     out.append("")
     if inline_sql:
         for rec in inline_sql:
-            via = "JdbcTemplate" if rec["via"] == "jdbc-template" else "MP Wrapper"
+            via = {"jdbc-template": "JdbcTemplate", "mp-wrapper": "MP Wrapper",
+                   "mp-example": "MP Example"}.get(rec["via"], rec["via"])
             tx = "  🔒事务内" if rec["in_tx"] else ""
             out.append(f"- **{rec['owner']}** — @{rec['kind']}（{via}）{tx}  (`{rec['file']}`)")
             short = rec["text"] if len(rec["text"]) <= 120 else rec["text"][:117] + "..."
@@ -1620,7 +1784,10 @@ def main():
                                      "tables": sql_tables.get(f"{mp['name']}#{meth['name']}", []),
                                      "columns": sql_columns.get(f"{mp['name']}#{meth['name']}", [])}
                                     if meth["sql"]
-                                    else xml_stmts.get(f"{mp['name']}#{meth['name']}")),
+                                    else xml_stmts.get(f"{mp['name']}#{meth['name']}")
+                                    or (mp_builtin_sql_record(meth["name"],
+                                                              by_simple.get(mp["base_entity"]))
+                                        if meth["name"] in MP_BUILTIN else None)),
                             "reverse": rindex.get(f"{mp['name']}#{meth['name']}"),
                         }
                         for meth in mp["methods"]

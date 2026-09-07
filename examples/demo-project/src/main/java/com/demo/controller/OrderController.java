@@ -41,4 +41,10 @@ public class OrderController {
                                       @RequestParam boolean recentOnly) {
         return orderService.searchOrdersFlexible(keyword, status, recentOnly);
     }
+
+    /** Wrapper 拷贝别名入口（验证别名共享续链）。 */
+    @GetMapping("/orders/search-alias")
+    public List<Order> searchAlias(@RequestParam String keyword) {
+        return orderService.searchByAliasCopy(keyword);
+    }
 }

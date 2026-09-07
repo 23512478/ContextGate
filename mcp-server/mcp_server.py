@@ -232,7 +232,8 @@ def trace_call(query: str, project: str = "") -> str:
                 out_lines.append(f"{prefix}      `{short}`")
             # 该方法体内写死的 SQL：JdbcTemplate 裸 SQL / MP Wrapper 动态链
             for rec in inline_by_owner.get(node, []):
-                label = "JdbcTemplate" if rec["via"] == "jdbc-template" else "MP Wrapper"
+                label = {"jdbc-template": "JdbcTemplate", "mp-wrapper": "MP Wrapper",
+                         "mp-example": "MP Example"}.get(rec["via"], rec["via"])
                 txflag = " 🔒事务内" if rec.get("in_tx") else ""
                 out_lines.append(f"{prefix}  → @{rec['kind']} ({label}){txflag}")
                 txt = rec["text"]
@@ -310,7 +311,8 @@ def find_sql(query: str, project: str = "") -> str:
                 out.append("- 上游路由: " + ", ".join(f"`{r['method']} {r['path']}`" for r in routes))
             out.append("")
         for rec in inline_hits:
-            label = "JdbcTemplate" if rec["via"] == "jdbc-template" else "MP Wrapper"
+            label = {"jdbc-template": "JdbcTemplate", "mp-wrapper": "MP Wrapper",
+                         "mp-example": "MP Example"}.get(rec["via"], rec["via"])
             txflag = "  🔒事务内" if rec.get("in_tx") else ""
             out.append(f"**{rec['owner']}** — @{rec['kind']}（{label}）{txflag}")
             out.append(f"- SQL: `{rec['text']}`")
@@ -435,7 +437,8 @@ def impact(entity: str, field: str = "", project: str = "") -> str:
             out.append("### 受影响的内嵌 SQL（JdbcTemplate / MP Wrapper，不走 Mapper 接口）")
             out.append("")
             for rec in inline_hits:
-                label = "JdbcTemplate" if rec["via"] == "jdbc-template" else "MP Wrapper"
+                label = {"jdbc-template": "JdbcTemplate", "mp-wrapper": "MP Wrapper",
+                         "mp-example": "MP Example"}.get(rec["via"], rec["via"])
                 tx_flag = ("  🔒事务内写" if rec.get("in_tx") and rec["kind"] != "SELECT"
                            else "  🔒事务内" if rec.get("in_tx") else "")
                 out.append(f"- **{rec['owner']}** — @{rec['kind']}（{label}）{tx_flag}")

@@ -9,6 +9,10 @@
 - XML mapper 解析增强：`<foreach>` 批量条件重建（保留 `IN (…)` 形状与参数占位）、resultMap `extends` 继承合并（父映射流入子映射）、`<association>`/`<collection>` 嵌套映射的列归因到 javaType/ofType 对应实体
 - JdbcTemplate 的 SQL 抽成类级 `static final` String 常量可解析（支持字面量拼接与 `Foo.SQL_X` 跨类引用；常量互拼不追）
 - MyBatis-Plus Wrapper 拆变量跨语句链式调用：定义/续链/消费点分离的写法可拼出完整合成 SQL，if 分支内续链保守计入（单变量直链）
+- 常量互拼折叠：类级 SQL 常量支持引用同类常量（`SQL_A + "字面量"`，不动点折叠；环/未知标识符放弃）
+- Wrapper 拷贝别名：`w2 = w` 共享底层链，任一变量后续续链都计入同一查询
+- MP 内置 count 族（`selectCount`/`count`/`exists`/`countByExample`）不再虚报全列，标 0 列；行读取方法维持全列（语义事实：取整行）
+- MyBatis Generator `Example` 动态条件解析（v1）：`andXxxEqualTo` 等条件方法解码列名/操作符，`selectByExample`/`countByExample`/`deleteByExample`/`updateByExample` 消费合成 WHERE；`*ByExample` 方法纳入内置方法合成
 - MCP Server 多项目模式：新增 `CODECONTEXT_MAPS_DIR` 地图目录，`refresh_map` 按项目目录名自动注册，三个查询工具新增 `project` 参数，新增 `list_maps` 工具
 
 ### 修复

@@ -255,6 +255,33 @@ def main():
         assert "searchOrdersFlexible" in out_flex_imp, \
             "分支续链触碰的 create_time 应计入 Order 影响面"
 
+        # 7.23 常量互拼：SQL_A + "x" 折叠出完整 SQL（WHERE_OPENID 流入 SQL_OPENID_DETAIL）
+        out_const2 = call_tool(proc, "trace_call", {"query": "GET /api/v1/stats/openid/detail"})
+        assert "FROM users WHERE openid = 'demo-openid'" in out_const2, \
+            "常量互拼应折叠出完整 SQL（含引用的 WHERE_OPENID 片段）"
+
+        # 7.24 Wrapper 拷贝别名：w2 = w 共享底层链，w 的 eq + w2 的 like 都在
+        out_alias = call_tool(proc, "trace_call", {"query": "GET /api/v1/orders/search-alias"})
+        assert "status = ?" in out_alias and "title = ?" in out_alias, \
+            "别名共享链应同时含 w 的 eq(status) 与 w2 的 like(title)"
+
+        # 7.25 MP 内置 count：COUNT(*) 不触碰业务列（0 列），字段级影响面不应命中
+        out_count = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/count"})
+        assert "selectCount" in out_count, "count 调用应出现在链路上"
+        out_nick_count = call_tool(proc, "impact", {"entity": "User", "field": "nickname"})
+        assert "countUsers" not in out_nick_count, \
+            "selectCount 不触碰业务列，字段级影响面不应命中"
+        out_ent_user = call_tool(proc, "impact", {"entity": "User"})
+        assert "触碰 0 列" in out_ent_user, "实体级影响面应显示 count 触碰 0 列"
+
+        # 7.26 MBG Example：createCriteria().andXxxEqualTo + selectByExample 合成 WHERE
+        out_example = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/search-example"})
+        assert "nickname = ?" in out_example and "(MP Example)" in out_example, \
+            "Example 动态条件应合成 WHERE 并标注 MP Example"
+        out_nick_example = call_tool(proc, "impact", {"entity": "User", "field": "nickname"})
+        assert "searchExample" in out_nick_example, \
+            "Example 条件列 nickname 应计入 User 影响面"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-08 04:22:15
-- 扫描类: 20 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 17 条 | 调用图边: 27 个方法
+- 生成时间: 2026-09-08 04:55:40
+- 扫描类: 21 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 21 条 | 调用图边: 34 个方法
 
 ---
 
@@ -44,6 +44,10 @@
 **OrderController#search**
    ├─ OrderServiceImpl#searchByTitle  （组件/工具）
 
+### `GET /api/v1/orders/search-alias`
+**OrderController#searchAlias**
+   ├─ OrderServiceImpl#searchByAliasCopy  （组件/工具）
+
 ### `GET /api/v1/orders/search-flexible`
 **OrderController#searchFlexible**
    ├─ OrderServiceImpl#searchOrdersFlexible  （组件/工具）
@@ -65,6 +69,11 @@
    └─ StatsService#demoOpenidCount
       ├─ JdbcTemplate#queryForObject  （组件/工具）
 
+### `GET /api/v1/stats/openid/detail`
+**StatsController#openidDetail**
+   └─ StatsService#demoOpenidDetail
+      ├─ JdbcTemplate#queryForList  （组件/工具）
+
 ### `GET /api/v1/stats/orders/sum`
 **StatsController#orderSum**
    └─ StatsService#orderAmountSum
@@ -75,6 +84,10 @@
    └─ StatsService#topWallets
       ├─ JdbcTemplate#queryForList  （组件/工具）
 
+### `GET /api/v1/wallet/count`
+**WalletController#countUsers**
+   ├─ UserMapper#selectCount  （MP 内置）
+
 ### `GET /api/v1/wallet/me`
 **WalletController#me**
    ├─ UserMapper#selectById  （MP 内置）
@@ -83,6 +96,10 @@
 **WalletController#recharge**
    ├─ UserMapper#addBalance  → @UPDATE 自定义SQL ✍️写
    │     `UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + #{delta} WHERE id = #{userId}`
+
+### `GET /api/v1/wallet/search-example`
+**WalletController#searchExample**
+   ├─ UserMapper#selectByExample  （MP 内置）
 
 ---
 
@@ -197,6 +214,9 @@ UserMapper#selectById
 
 > 改 SQL 前必查：上游有多少路由依赖它，动了会炸几个接口。
 
+- **UserMapper#selectByExample** ← 1 条路由 
+  - 直接调用者: `WalletController#searchExample`
+  - `GET /api/v1/wallet/search-example`
 - **UserMapper#addBalance** ← 1 条路由 
   - 直接调用者: `WalletController#recharge`
   - `POST /api/v1/wallet/recharge`
@@ -243,6 +263,10 @@ UserMapper#selectById
 - **DemoDataInitializer#initDemoData** — @INSERT（JdbcTemplate）  (`src\main\java\com\demo\config\DemoDataInitializer.java`)
   - `INSERT INTO users (openid, nickname, wallet_balance) VALUES ('demo-openid', 'demo-user', 0)`
   - 涉及表: `users`
+- **WalletController#searchExample** — @SELECT（MP Example）  (`src\main\java\com\demo\controller\WalletController.java`)
+  - `SELECT * FROM users WHERE nickname = ?`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/wallet/search-example`
 - **OrderServiceImpl#searchByTitle** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\OrderServiceImpl.java`)
   - `SELECT * FROM orders WHERE title = ? AND status = ? ORDER BY create_time`
   - 涉及表: `orders`
@@ -251,6 +275,10 @@ UserMapper#selectById
   - `SELECT * FROM orders WHERE title = ? AND create_time = ? AND status = ?`
   - 涉及表: `orders`
   - 上游路由: `GET /api/v1/orders/search-flexible`
+- **OrderServiceImpl#searchByAliasCopy** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\OrderServiceImpl.java`)
+  - `SELECT * FROM orders WHERE status = ? AND title = ?`
+  - 涉及表: `orders`
+  - 上游路由: `GET /api/v1/orders/search-alias`
 - **StatsService#topWallets** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
   - `SELECT id, nickname, wallet_balance FROM users ORDER BY wallet_balance DESC LIMIT 10`
   - 涉及表: `users`
@@ -263,3 +291,7 @@ UserMapper#selectById
   - `SELECT COUNT(*) AS openid_total FROM users WHERE openid = 'demo-openid'`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/stats/openid/count`
+- **StatsService#demoOpenidDetail** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT id, nickname FROM users WHERE openid = 'demo-openid'`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/stats/openid/detail`

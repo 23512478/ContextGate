@@ -36,4 +36,14 @@ public class StatsService {
     public Long demoOpenidCount() {
         return jdbcTemplate.queryForObject(SQL_DEMO_OPENID, Long.class);
     }
+
+    /** 公共 WHERE 片段 + 每查询片段：常量互拼（验证常量折叠到不动点）。 */
+    private static final String WHERE_OPENID = " WHERE openid = 'demo-openid'";
+    private static final String SQL_OPENID_DETAIL =
+            "SELECT id, nickname FROM users" + WHERE_OPENID;
+
+    /** 常量互拼 SQL 统计。 */
+    public List<Map<String, Object>> demoOpenidDetail() {
+        return jdbcTemplate.queryForList(SQL_OPENID_DETAIL);
+    }
 }

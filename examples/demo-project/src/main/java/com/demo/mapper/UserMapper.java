@@ -2,9 +2,12 @@ package com.demo.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.demo.entity.User;
+import com.demo.entity.UserExample;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
+
+import java.util.List;
 
 @Mapper
 public interface UserMapper extends BaseMapper<User> {
@@ -20,4 +23,7 @@ public interface UserMapper extends BaseMapper<User> {
     // 写操作
     @Update("UPDATE users SET wallet_balance = COALESCE(wallet_balance, 0) + #{delta} WHERE id = #{userId}")
     int addBalance(Long userId, java.math.BigDecimal delta);
+
+    // MBG 风格：SQL 由 Example 动态条件合成（无注解 SQL）
+    List<User> selectByExample(UserExample example);
 }

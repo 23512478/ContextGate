@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-08T04:22:15",
-    "classes": 20,
+    "generated_at": "2026-09-08T04:55:40",
+    "classes": 21,
     "controllers": 5,
     "mappers": 5,
     "entities": 5,
-    "routes": 17
+    "routes": 21
   },
   "routes": [
     {
@@ -65,6 +65,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/orders/search-alias",
+      "controller": "OrderController",
+      "handler": "searchAlias"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/orders/search-flexible",
       "controller": "OrderController",
       "handler": "searchFlexible"
@@ -89,6 +95,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/stats/openid/detail",
+      "controller": "StatsController",
+      "handler": "openidDetail"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/stats/orders/sum",
       "controller": "StatsController",
       "handler": "orderSum"
@@ -101,6 +113,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/wallet/count",
+      "controller": "WalletController",
+      "handler": "countUsers"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/wallet/me",
       "controller": "WalletController",
       "handler": "me"
@@ -110,6 +128,12 @@
       "path": "/api/v1/wallet/recharge",
       "controller": "WalletController",
       "handler": "recharge"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/search-example",
+      "controller": "WalletController",
+      "handler": "searchExample"
     }
   ],
   "mappers": [
@@ -421,6 +445,7 @@
           },
           "reverse": {
             "direct_callers": [
+              "OrderServiceImpl#searchByAliasCopy",
               "OrderServiceImpl#searchByTitle",
               "OrderServiceImpl#searchOrdersFlexible"
             ],
@@ -428,6 +453,10 @@
               {
                 "method": "GET",
                 "path": "/api/v1/orders/search"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/orders/search-alias"
               },
               {
                 "method": "GET",
@@ -586,6 +615,36 @@
           }
         },
         {
+          "name": "selectByExample",
+          "params": "UserExample example",
+          "sql": {
+            "kind": "SELECT",
+            "text": "(MyBatis-Plus 内置 SELECT *)",
+            "tables": [
+              "users"
+            ],
+            "columns": [
+              "users.create_time (User.createTime)",
+              "users.id (User.id)",
+              "users.nickname (User.nickname)",
+              "users.openid (User.openid)",
+              "users.wallet_balance (User.walletBalance)"
+            ],
+            "mp_builtin": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "WalletController#searchExample"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/search-example"
+              }
+            ]
+          }
+        },
+        {
           "name": "selectById",
           "params": "(MP 内置)",
           "sql": {
@@ -616,6 +675,30 @@
               {
                 "method": "GET",
                 "path": "/api/v1/wallet/me"
+              }
+            ]
+          }
+        },
+        {
+          "name": "selectCount",
+          "params": "(MP 内置)",
+          "sql": {
+            "kind": "SELECT",
+            "text": "(MyBatis-Plus 内置 COUNT/EXISTS)",
+            "tables": [
+              "users"
+            ],
+            "columns": [],
+            "mp_builtin": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "WalletController#countUsers"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/count"
               }
             ]
           }
@@ -763,6 +846,14 @@
         "is_db_write": false
       }
     ],
+    "OrderController#searchAlias": [
+      {
+        "kind": "component",
+        "class": "OrderServiceImpl",
+        "method": "searchByAliasCopy",
+        "is_db_write": false
+      }
+    ],
     "OrderController#searchFlexible": [
       {
         "kind": "component",
@@ -790,6 +881,14 @@
         "kind": "mapper",
         "class": "OrderMapper",
         "method": "selectMyOrders",
+        "is_db_write": false
+      }
+    ],
+    "OrderServiceImpl#searchByAliasCopy": [
+      {
+        "kind": "mapper",
+        "class": "OrderMapper",
+        "method": "selectList",
         "is_db_write": false
       }
     ],
@@ -849,6 +948,14 @@
         "is_db_write": false
       }
     ],
+    "StatsController#openidDetail": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "demoOpenidDetail",
+        "is_db_write": false
+      }
+    ],
     "StatsController#orderSum": [
       {
         "kind": "service",
@@ -873,6 +980,14 @@
         "is_db_write": false
       }
     ],
+    "StatsService#demoOpenidDetail": [
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "queryForList",
+        "is_db_write": false
+      }
+    ],
     "StatsService#orderAmountSum": [
       {
         "kind": "component",
@@ -886,6 +1001,22 @@
         "kind": "component",
         "class": "JdbcTemplate",
         "method": "queryForList",
+        "is_db_write": false
+      }
+    ],
+    "UserExample#createCriteria": [
+      {
+        "kind": "component",
+        "class": "List",
+        "method": "add",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#countUsers": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectCount",
         "is_db_write": false
       }
     ],
@@ -903,6 +1034,14 @@
         "class": "UserMapper",
         "method": "addBalance",
         "is_db_write": true
+      }
+    ],
+    "WalletController#searchExample": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectByExample",
+        "is_db_write": false
       }
     ]
   },
@@ -946,6 +1085,30 @@
       "in_tx": false,
       "routes": [],
       "file": "src\\main\\java\\com\\demo\\config\\DemoDataInitializer.java"
+    },
+    {
+      "owner": "WalletController#searchExample",
+      "via": "mp-example",
+      "kind": "SELECT",
+      "text": "SELECT * FROM users WHERE nickname = ?",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.create_time (User.createTime)",
+        "users.id (User.id)",
+        "users.nickname (User.nickname)",
+        "users.openid (User.openid)",
+        "users.wallet_balance (User.walletBalance)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/wallet/search-example"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\controller\\WalletController.java"
     },
     {
       "owner": "OrderServiceImpl#searchByTitle",
@@ -993,6 +1156,31 @@
         {
           "method": "GET",
           "path": "/api/v1/orders/search-flexible"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\OrderServiceImpl.java"
+    },
+    {
+      "owner": "OrderServiceImpl#searchByAliasCopy",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT * FROM orders WHERE status = ? AND title = ?",
+      "tables": [
+        "orders"
+      ],
+      "columns": [
+        "orders.amount (Order.amount)",
+        "orders.create_time (Order.createTime)",
+        "orders.id (Order.id)",
+        "orders.status (Order.status)",
+        "orders.title (Order.title)",
+        "orders.user_id (Order.userId)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/orders/search-alias"
         }
       ],
       "file": "src\\main\\java\\com\\demo\\service\\OrderServiceImpl.java"
@@ -1055,6 +1243,28 @@
         {
           "method": "GET",
           "path": "/api/v1/stats/openid/count"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    },
+    {
+      "owner": "StatsService#demoOpenidDetail",
+      "via": "jdbc-template",
+      "kind": "SELECT",
+      "text": "SELECT id, nickname FROM users WHERE openid = 'demo-openid'",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.id (User.id)",
+        "users.nickname (User.nickname)",
+        "users.openid (User.openid)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/stats/openid/detail"
         }
       ],
       "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"

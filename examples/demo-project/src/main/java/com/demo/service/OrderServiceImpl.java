@@ -59,4 +59,13 @@ public class OrderServiceImpl {
         w.eq(Order::getStatus, status);
         return orderMapper.selectList(w);
     }
+
+    /** Wrapper 拷贝别名：w2 = w 后各自续链（同一底层对象，验证别名共享）。 */
+    public List<Order> searchByAliasCopy(String keyword) {
+        LambdaQueryWrapper<Order> w = new LambdaQueryWrapper<>();
+        w.eq(Order::getStatus, 1);
+        LambdaQueryWrapper<Order> w2 = w;
+        w2.like(Order::getTitle, keyword);
+        return orderMapper.selectList(w2);
+    }
 }

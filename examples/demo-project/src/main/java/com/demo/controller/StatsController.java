@@ -31,4 +31,9 @@ public class StatsController {
     public Long openidCount() {
         return statsService.demoOpenidCount();
     }
+
+    @GetMapping("/stats/openid/detail")
+    public List<Map<String, Object>> openidDetail() {
+        return statsService.demoOpenidDetail();
+    }
 }
