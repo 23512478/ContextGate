@@ -64,6 +64,18 @@ MP_BUILTIN = {
 }
 # COUNT/EXISTS 族：不取行数据，不触碰业务列
 MP_COUNT_ONLY = {"selectCount", "count", "exists", "countByExample"}
+# MP ServiceImpl 继承方法 → baseMapper 内置方法：this.list() 归到 M.selectList
+# （snowy/dax-pay 等项目的服务层不注入 mapper 字段，全部走 ServiceImpl 泛型 M）
+_SERVICE_BUILTIN_MAP = {
+    "list": "selectList", "getOne": "selectOne", "getObj": "selectObjs",
+    "getById": "selectById", "listByIds": "selectBatchIds", "save": "insert",
+    "remove": "delete", "removeById": "deleteById", "removeByIds": "deleteByIds",
+    "removeBatchByIds": "deleteByIds", "updateBatchById": "updateBatchById",
+    "count": "selectCount", "page": "selectPage", "exists": "exists",
+    "saveOrUpdate": "saveOrUpdate", "updateById": "updateById", "update": "update",
+}
+
+
 MP_WRITE = {
     "insert", "deleteById", "deleteByIds", "deleteByMap", "delete", "updateById", "update",
     "save", "saveBatch", "saveOrUpdate", "saveOrUpdateBatch", "updateBatchById",
@@ -861,32 +873,53 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
             # ---- 3) MBG Example 动态条件 ----
             out.extend(_example_defuse(owner, body, ent_by_simple, table_to_entity))
 
-            # ---- 4) Mapper default 方法的字段值便捷调用 ----
-            # selectOne(Entity::getField, value)（支持多字段对）——yudao/BaseMapperPlus 风格，
-            # 仓库实测 500+ 处。count 族只触碰条件列，行读取维持全列
+            # ---- 4) 泛型实体上的字段值便捷调用 ----
+            # (a) Mapper 接口：selectOne(Entity::getField, value)（支持多字段对，yudao 风格）
+            # (b) ServiceImpl/BaseManager 派生类：this.findByField(Entity::getField, value)
+            #     （dax-pay 的 Manager 层）。count/remove 族只触碰条件列，行读取维持全列
+            ent_name4 = None
             if c.get("is_mapper") and c.get("base_entity"):
-                ent_obj = ent_by_simple.get(c["base_entity"])
+                ent_name4 = c["base_entity"]
+            else:
+                sm4 = re.search(r"(?:ServiceImpl|BaseManager)\s*<\s*\w+\s*,\s*(\w+)\s*>", c["extends"])
+                if sm4:
+                    ent_name4 = sm4.group(1)
+            if ent_name4:
+                ent_obj = ent_by_simple.get(ent_name4)
                 if ent_obj and ent_obj.get("entity_columns"):
-                    ent_name4, ecols, tbl = ent_obj["name"], ent_obj["entity_columns"], ent_obj["table_name"]
-                    for fv in re.finditer(r"\b(selectOne|selectList|selectCount|exists|count)\s*\(", body):
+                    ent_name4b, ecols, tbl = ent_obj["name"], ent_obj["entity_columns"], ent_obj["table_name"]
+                    verbs4 = ("selectOne|selectList|selectCount|exists|count" if c.get("is_mapper")
+                              else "selectOne|selectList|selectCount|exists|count|findByField|findAllByField")
+                    for fv in re.finditer(rf"\b({verbs4})\s*\(", body):
                         region = _stmt_to_semicolon(body, fv.start())
                         if re.search(r"new\s+\w*Wrapper", region):
                             continue  # Wrapper 传参形态走 2a/2c，这里只管字段值形态
                         cond_fnames = [m2.group(1)[0].lower() + m2.group(1)[1:]
                                        for m2 in re.finditer(
-                                           rf"{re.escape(c['base_entity'])}::get(\w+)", region)
+                                           rf"{re.escape(ent_name4b)}::get(\w+)", region)
                                        if (m2.group(1)[0].lower() + m2.group(1)[1:]) in ecols]
                         if not cond_fnames:
                             continue
                         where4 = " AND ".join(f"{ecols[f]} = ?" for f in dict.fromkeys(cond_fnames))
-                        marker = lambda fname: f"{tbl}.{ecols[fname]} ({ent_name4}.{fname})"
-                        if fv.group(1) in ("selectCount", "count", "exists"):
+                        marker = lambda fname: f"{tbl}.{ecols[fname]} ({ent_name4b}.{fname})"
+                        v4 = fv.group(1).lower()
+                        if v4.startswith(("selectcount", "count", "exists")):
+                            kind4 = "SELECT"
                             text4 = f"SELECT COUNT(*) FROM {tbl} WHERE {where4}"
                             cols4 = sorted({marker(f) for f in cond_fnames})
+                        elif v4.startswith(("remove", "delete")):
+                            kind4 = "DELETE"
+                            text4 = f"DELETE FROM {tbl} WHERE {where4}"
+                            cols4 = sorted({marker(f) for f in cond_fnames})
+                        elif v4.startswith("update"):
+                            kind4 = "UPDATE"
+                            text4 = f"UPDATE {tbl} SET ? WHERE {where4}"
+                            cols4 = sorted(marker(f) for f in ecols)
                         else:
+                            kind4 = "SELECT"
                             text4 = f"SELECT * FROM {tbl} WHERE {where4}"
                             cols4 = sorted(marker(f) for f in ecols)
-                        out.append({"owner": owner, "via": "mp-wrapper", "kind": "SELECT",
+                        out.append({"owner": owner, "via": "mp-wrapper", "kind": kind4,
                                     "text": text4, "tables": [tbl], "columns": cols4})
     return out
 
@@ -1342,6 +1375,19 @@ def resolve_callees(target, mname, by_simple, impl_of):
             self_calls.add(ref_m)
     for sc in sorted(self_calls):
         out.append(("self", target["name"], sc, False))
+
+    # ServiceImpl<M, T> 继承式调用：this.list()/remove()/getById() 等委托给
+    # 泛型 M（mapper）的同名内置方法；被本类同名方法覆盖的不算
+    sm = re.search(r"(?:ServiceImpl|BaseManager)<\s*(\w+)\s*,\s*\w+\s*>", target["extends"])
+    if sm:
+        for field, cmethod in method["calls"]:
+            if field == "this" and cmethod in _SERVICE_BUILTIN_MAP and cmethod not in own_names:
+                mapped = _SERVICE_BUILTIN_MAP[cmethod]
+                out.append(("mapper", sm.group(1), mapped, mapped in MP_WRITE))
+        for bc in method.get("bare_calls", []):
+            if bc in _SERVICE_BUILTIN_MAP and bc not in own_names:
+                mapped = _SERVICE_BUILTIN_MAP[bc]
+                out.append(("mapper", sm.group(1), mapped, mapped in MP_WRITE))
 
     for field, cmethod in method["calls"]:
         if field == "this":

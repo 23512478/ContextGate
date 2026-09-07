@@ -18,6 +18,11 @@ public class ProductController {
     @Autowired
     private ProductService productService;
 
+    @GetMapping("/products/detail")
+    public Product detail(@RequestParam Long id) {
+        return productService.getByIdOrThrow(id);
+    }
+
     @GetMapping("/products")
     public List<Product> list() {
         return productService.list();

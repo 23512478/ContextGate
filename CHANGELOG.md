@@ -6,6 +6,10 @@
 
 ### 新增
 
+- **真实项目训练（第二轮：snowy / xmall / favorites-web / xzs / dax-pay）**
+  - ServiceImpl/BaseManager 继承式调用：`extends ServiceImpl<M, T>` / `BaseManager<M, T>` 的服务层不再要求注入 mapper 字段，`this.list()`/`remove()`/`getById()` 等 17 个继承方法映射到泛型 M 的 baseMapper 内置方法（snowy 逆向索引 4 → 200，事务闭包 339 → 480）
+  - Manager 层字段值调用：BaseManager 派生类里 `this.findByField(Entity::getField, value)` 合成 WHERE（dax-pay 内嵌 SQL 2 → 52 条）；DELETE/UPDATE 语义按调用动词细分
+  - favorites-web 为 JPA 项目（无 MyBatis），逆向索引 0 属正确行为
 - **真实项目训练（第一轮：mall / ruoyi-vue-pro / JeecgBoot / jpetstore-6 / renren-fast）**
   - X 后缀扩展 Wrapper（`LambdaQueryWrapperX` / `QueryWrapperX` 等，yudao 系自研类）纳入 Wrapper 识别与 def-use
   - Mapper default 方法字段值便捷调用：`selectOne(Entity::getField, value)`（支持多字段对，yudao/BaseMapperPlus 风格，ruoyi-vue-pro 仓库实测 500+ 处）；count 族只触碰条件列。ruoyi-vue-pro 内嵌 SQL 识别 178 → 1631 条，无 SQL 方法覆盖率 85%

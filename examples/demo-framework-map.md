@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-08 06:19:44
-- 扫描类: 23 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 25 条 | 调用图边: 40 个方法
+- 生成时间: 2026-09-08 06:34:00
+- 扫描类: 23 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 26 条 | 调用图边: 42 个方法
 
 ---
 
@@ -70,6 +70,12 @@
       ├─ ProductMapper#selectAll  → @SELECT 自定义SQL
       │     `SELECT * FROM product ORDER BY create_time DESC`
 
+### `GET /api/v1/products/detail`
+**ProductController#detail**
+   └─ ProductServiceImpl#getByIdOrThrow
+      ├─ ProductMapper#selectById  → @SELECT 自定义SQL
+      │     `SELECT * FROM product WHERE id = #{id}`
+
 ### `POST /api/v1/products/purchase`
 **ProductController#purchase**
    └─ ProductServiceImpl#purchase  [@Transactional]
@@ -134,6 +140,7 @@
   - SQL: `SELECT * FROM product WHERE id = #{id}`
   - 涉及表: `product`
   - 触碰列: `product.create_time (Product.createTime)`, `product.id (Product.id)`, `product.name (Product.name)`, `product.price (Product.price)`, `product.stock (Product.stock)`
+  - ↑ 上游路由: `GET /api/v1/products/detail`
 - **ProductMapper#selectAll** — @SELECT
   - SQL: `SELECT * FROM product ORDER BY create_time DESC`
   - 涉及表: `product`
@@ -209,8 +216,9 @@ UserMapper#selectById
 ### Product → 表 `product`（5 个字段）
 
 - 字段: `id`→`id`, `name`→`name`, `price`→`price`, `stock`→`stock`, `createTime`→`create_time`
+- 专属 Mapper: `ProductMapper`
 - 被自定义 SQL 触碰: 3 处
-  - `ProductMapper#selectById`（波及 0 条路由）
+  - `ProductMapper#selectById`（波及 1 条路由）
   - `ProductMapper#selectAll`（波及 1 条路由）
   - `ProductMapper#deductStock`（波及 1 条路由）
 
@@ -239,6 +247,9 @@ UserMapper#selectById
 - **UserMapper#addBalance** ← 1 条路由 
   - 直接调用者: `WalletController#recharge`
   - `POST /api/v1/wallet/recharge`
+- **ProductMapper#selectById** ← 1 条路由 
+  - 直接调用者: `ProductServiceImpl#getByIdOrThrow`
+  - `GET /api/v1/products/detail`
 - **ProductMapper#selectAll** ← 1 条路由 
   - 直接调用者: `ProductServiceImpl#list`
   - `GET /api/v1/products`
@@ -335,3 +346,6 @@ UserMapper#selectById
   - `SELECT id, nickname FROM users WHERE openid = 'demo-openid'`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/stats/openid/detail`
+- **ProductServiceImpl#findByIdField** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\impl\ProductServiceImpl.java`)
+  - `SELECT * FROM product WHERE id = ?`
+  - 涉及表: `product`

@@ -328,6 +328,11 @@ def main():
         assert "SELECT * FROM users WHERE nickname = ?" in out_field, \
             "selectOne(Entity::getField, value) 应合成 WHERE 条件"
 
+        # 7.33 ServiceImpl 继承式调用：this.getById() 应归到泛型 M 的 baseMapper.selectById
+        out_svc = call_tool(proc, "trace_call", {"query": "GET /api/v1/products/detail"})
+        assert "ProductMapper#selectById" in out_svc, \
+            "ServiceImpl 继承方法 getById() 应映射到泛型 M 的 selectById 内置方法"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-08T06:19:44",
+    "generated_at": "2026-09-08T06:34:00",
     "classes": 23,
     "controllers": 5,
     "mappers": 5,
     "entities": 5,
-    "routes": 25
+    "routes": 26
   },
   "routes": [
     {
@@ -98,6 +98,12 @@
       "path": "/api/v1/products",
       "controller": "ProductController",
       "handler": "list"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/products/detail",
+      "controller": "ProductController",
+      "handler": "detail"
     },
     {
       "method": "POST",
@@ -575,7 +581,17 @@
               "product.stock (Product.stock)"
             ]
           },
-          "reverse": null
+          "reverse": {
+            "direct_callers": [
+              "ProductServiceImpl#getByIdOrThrow"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/products/detail"
+              }
+            ]
+          }
         },
         {
           "name": "selectAll",
@@ -1069,6 +1085,14 @@
         "is_db_write": false
       }
     ],
+    "ProductController#detail": [
+      {
+        "kind": "service",
+        "class": "ProductServiceImpl",
+        "method": "getByIdOrThrow",
+        "is_db_write": false
+      }
+    ],
     "ProductController#list": [
       {
         "kind": "service",
@@ -1082,6 +1106,14 @@
         "kind": "service",
         "class": "ProductServiceImpl",
         "method": "purchase",
+        "is_db_write": false
+      }
+    ],
+    "ProductServiceImpl#getByIdOrThrow": [
+      {
+        "kind": "mapper",
+        "class": "ProductMapper",
+        "method": "selectById",
         "is_db_write": false
       }
     ],
@@ -1546,6 +1578,25 @@
         }
       ],
       "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    },
+    {
+      "owner": "ProductServiceImpl#findByIdField",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT * FROM product WHERE id = ?",
+      "tables": [
+        "product"
+      ],
+      "columns": [
+        "product.create_time (Product.createTime)",
+        "product.id (Product.id)",
+        "product.name (Product.name)",
+        "product.price (Product.price)",
+        "product.stock (Product.stock)"
+      ],
+      "in_tx": false,
+      "routes": [],
+      "file": "src\\main\\java\\com\\demo\\service\\impl\\ProductServiceImpl.java"
     }
   ]
 }

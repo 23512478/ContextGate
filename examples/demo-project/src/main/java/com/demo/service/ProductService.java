@@ -13,6 +13,8 @@ public interface ProductService {
 
     List<Product> list();
 
+    Product getByIdOrThrow(Long id);
+
     @Transactional
     int purchase(Long id, Integer count);
 }
