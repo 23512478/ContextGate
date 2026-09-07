@@ -1,5 +1,9 @@
 # ContextGate
 
+[![Release](https://img.shields.io/github/v/release/23512478/ContextGate)](https://github.com/23512478/ContextGate/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+
 > 给 Spring Boot + MyBatis(-Plus) 项目做一份「框架感知代码地图」，再通过 MCP 协议喂给 AI 编程工具（Trae / Cursor / Claude Code 等）。
 
 AI 编程工具改后端代码时，通常靠全文搜索去猜"这个接口调了谁、这条 SQL 碰了哪些表、改这个字段会炸哪条链路"——费 token、还容易幻觉。ContextGate 的思路是**离线预编译框架约定**：把 Spring 的隐式约定（路由注解、依赖注入、事务边界）和 MyBatis 的映射关系（Mapper → SQL → 表/列 → 实体）静态解析成结构化地图，AI 只需要调一个工具就能拿到压缩后的调用链和影响面。
@@ -28,12 +32,12 @@ Spring Boot + MyBatis 项目的调用关系大量是**隐式约定**：一个 HT
 
 ## 它能做什么
 
-- **调用链追踪**：`POST /orders/my` → Controller → Service → Mapper → SQL 全文，含 `@Transactional` 事务边界标记
+- **调用链追踪**：`GET /api/v1/orders/my` → Controller → Service → Mapper → SQL 全文，含 `@Transactional` 事务边界标记
 - **SQL 反查**：按 Mapper 方法名 / 表名 / 列名片段搜 SQL，给出 SQL 全文、涉及表、触碰列、上游调用者和路由
 - **变更影响面**：改实体/字段前查出波及的自定义 SQL、MyBatis-Plus 内置 CRUD 调用点（`selectById`=SELECT * 全列触碰）、上游路由
 - **一键刷新**：代码改完让 AI 调 `refresh_map`，秒级重跑分析器
 
-已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`/`<sql>`+`<include>`/`<set>`/`<if>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链）、实体映射（`@TableName/@TableField` **或** model/domain 包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（20 个 Java 文件 + XML），每种规则都有夹具和回归断言。
+已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`/`<sql>`+`<include>`/`<set>`/`<if>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链）、实体映射（`@TableName/@TableField` **或** model/domain/entity 等包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（20 个 Java 文件 + XML），每种规则都有夹具和回归断言。
 
 ## 目录结构
 
@@ -70,7 +74,7 @@ python mcp-server/mcp_server.py              # 直接跑是 stdio 模式，由 A
 
 ### 3. 在 AI 工具里配置
 
-Trae：在你的 Spring Boot 项目根目录放 `.trae/mcp.json`；Cursor：写进全局 `~/.cursor/mcp.json`。
+Trae：在你的 Spring Boot 项目根目录放 `.trae/mcp.json`；Cursor：写进全局 `~/.cursor/mcp.json`；Claude Code：项目根目录放 `.mcp.json`（格式相同），或执行 `claude mcp add contextgate -- python <本仓库绝对路径>/mcp-server/mcp_server.py`。
 
 ```json
 {
