@@ -318,6 +318,16 @@ def main():
         assert "（MP Wrapper）" in out_lamb and "SELECT id, nickname FROM users WHERE nickname = ?" in out_lamb, \
             "mapper default 方法的 lambda() 链应合成 SQL 并能反查"
 
+        # 7.31 X 后缀扩展 Wrapper（LambdaQueryWrapperX，yudao 风格）
+        out_xwrap = call_tool(proc, "find_sql", {"query": "selectByIdX"})
+        assert "SELECT * FROM users WHERE id = ?" in out_xwrap, \
+            "LambdaQueryWrapperX 应被识别为 Wrapper 链"
+
+        # 7.32 字段值便捷方法：selectOne(Entity::getField, value)（yudao/BaseMapperPlus 风格）
+        out_field = call_tool(proc, "find_sql", {"query": "selectByNicknameField"})
+        assert "SELECT * FROM users WHERE nickname = ?" in out_field, \
+            "selectOne(Entity::getField, value) 应合成 WHERE 条件"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")
@@ -328,6 +338,11 @@ def main():
         out_notmapper = call_tool(proc, "find_sql", {"query": "DemoApplication"})
         assert "没找到匹配" in out_notmapper, \
             "@MapperScan 启动类不应被误判为 Mapper，javadoc 提及注解也不应触发"
+
+        # 8.2 回归：MapStruct 的 @Mapper（import org.mapstruct.Mapper）不是 MyBatis Mapper
+        out_notmybatis = call_tool(proc, "find_sql", {"query": "OrderConvert"})
+        assert "没找到匹配" in out_notmybatis, \
+            "MapStruct 转换器的 @Mapper 不应被误判为 MyBatis Mapper"
 
         print("\n" + "=" * 70)
         print("[全部通过] MCP Server 工作正常")

@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-08 05:50:31
-- 扫描类: 22 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 25 条 | 调用图边: 40 个方法
+- 生成时间: 2026-09-08 06:19:44
+- 扫描类: 23 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 25 条 | 调用图边: 40 个方法
 
 ---
 
@@ -293,6 +293,12 @@ UserMapper#selectById
   - `SELECT id, nickname FROM users WHERE nickname = ?`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/wallet/lambda`
+- **UserMapper#selectByIdX** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\mapper\UserMapper.java`)
+  - `SELECT * FROM users WHERE id = ?`
+  - 涉及表: `users`
+- **UserMapper#selectByNicknameField** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\mapper\UserMapper.java`)
+  - `SELECT * FROM users WHERE nickname = ?`
+  - 涉及表: `users`
 - **OrderServiceImpl#searchByTitle** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\OrderServiceImpl.java`)
   - `SELECT * FROM orders WHERE title = ? AND status = ? ORDER BY create_time`
   - 涉及表: `orders`

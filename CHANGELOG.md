@@ -6,6 +6,13 @@
 
 ### 新增
 
+- **真实项目训练（第一轮：mall / ruoyi-vue-pro / JeecgBoot / jpetstore-6 / renren-fast）**
+  - X 后缀扩展 Wrapper（`LambdaQueryWrapperX` / `QueryWrapperX` 等，yudao 系自研类）纳入 Wrapper 识别与 def-use
+  - Mapper default 方法字段值便捷调用：`selectOne(Entity::getField, value)`（支持多字段对，yudao/BaseMapperPlus 风格，ruoyi-vue-pro 仓库实测 500+ 处）；count 族只触碰条件列。ruoyi-vue-pro 内嵌 SQL 识别 178 → 1631 条，无 SQL 方法覆盖率 85%
+  - XML 懒加载子查询链接（`sub_selects` N+1 标注）与无接口方法的 XML 语句可见性
+  - Wrapper 条件构建 helper / 方法参数 / 拷贝别名 / Mapper `this.lambda()` 链
+  - 多项目模式（`CODECONTEXT_MAPS_DIR` + `project` 参数 + `list_maps`）
+
 - XML mapper 解析增强：`<foreach>` 批量条件重建（保留 `IN (…)` 形状与参数占位）、resultMap `extends` 继承合并（父映射流入子映射）、`<association>`/`<collection>` 嵌套映射的列归因到 javaType/ofType 对应实体
 - JdbcTemplate 的 SQL 抽成类级 `static final` String 常量可解析（支持字面量拼接与 `Foo.SQL_X` 跨类引用；常量互拼不追）
 - MyBatis-Plus Wrapper 拆变量跨语句链式调用：定义/续链/消费点分离的写法可拼出完整合成 SQL，if 分支内续链保守计入（单变量直链）
@@ -21,6 +28,8 @@
 
 ### 修复
 
+- MapStruct 的 `@Mapper` 与 MyBatis `@Mapper` 撞名误判：按 import 归属区分（ruoyi-vue-pro 数千个 `*Convert` 接口方法曾被误报为 Mapper 方法）；`extends BaseMapper` 的仍按 MyBatis 处理
+- 逆向索引统计按 is_mapper 类计数，`*Dao` 命名的 mapper（renren-fast）不再被漏计
 - XML 语句列清单的逗号清理会误伤 `order_id` 这类列名（`order` 前缀被误当 ORDER 关键字），补词边界
 - 类注解名改从去注释文本抽取：javadoc/注释里提及 `@Mapper`、`@param` 等，或 `@MapperScan` 含 `@Mapper` 子串，会把启动类误判成 Mapper、`@RestControllerAdvice` 异常处理器误判成 Controller（litemall/RuoYi 真实项目实测踩中）
 

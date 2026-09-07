@@ -484,9 +484,10 @@ def _static_str_fields(body_raw):
         if tokens:
             out[dm.group(1)] = tokens
     return out
-# new LambdaQueryWrapper<User>( / new QueryWrapper<User>(
+# new LambdaQueryWrapper<User>( / QueryWrapperX<User>(（X 后缀是 yudao 等项目的扩展 Wrapper）
 _WRAPPER_NEW_RE = re.compile(
-    r"new\s+(LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)\s*<\s*(\w+)\s*>\s*\(")
+    r"new\s+((?:LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)X?)"
+    r"\s*<\s*(\w+)\s*>\s*\(")
 # IService 的 .lambdaQuery() / .lambdaUpdate()
 _LAMBDA_ENTRY_RE = re.compile(r"\.\s*(lambdaQuery|lambdaUpdate)\s*\(")
 # 条件链上的动词：.eq( / .like( / .orderByDesc( / .set( ...
@@ -544,14 +545,15 @@ def _stmt_to_semicolon(text, start):
 
 
 # Wrapper 变量的跨语句 def-use：定义 / 消费动词
-_WRAP_TYPES = {"LambdaQueryWrapper", "LambdaUpdateWrapper", "QueryWrapper", "UpdateWrapper"}
+_WRAP_TYPES = {"LambdaQueryWrapper", "LambdaUpdateWrapper", "QueryWrapper", "UpdateWrapper",
+               "LambdaQueryWrapperX", "LambdaUpdateWrapperX", "QueryWrapperX", "UpdateWrapperX"}
 _WRAPPER_DECL_RE = re.compile(
     r"(?:final\s+)?(\w+)(?:\s*<\s*(\w+)\s*>)?\s+(\w+)\s*=\s*new\s+"
-    r"(LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)"
+    r"((?:LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)X?)"
     r"\s*(?:<\s*(\w+)?\s*>)?\s*\(")
 # 方法签名里的 Wrapper 参数：LambdaQueryWrapper<Order> w（参数当已定义变量）
 _WRAPPER_PARAM_RE = re.compile(
-    r"\b(LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)"
+    r"\b((?:LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)X?)"
     r"\s*<\s*(\w+)\s*>\s+(\w+)")
 
 
@@ -858,6 +860,34 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
 
             # ---- 3) MBG Example 动态条件 ----
             out.extend(_example_defuse(owner, body, ent_by_simple, table_to_entity))
+
+            # ---- 4) Mapper default 方法的字段值便捷调用 ----
+            # selectOne(Entity::getField, value)（支持多字段对）——yudao/BaseMapperPlus 风格，
+            # 仓库实测 500+ 处。count 族只触碰条件列，行读取维持全列
+            if c.get("is_mapper") and c.get("base_entity"):
+                ent_obj = ent_by_simple.get(c["base_entity"])
+                if ent_obj and ent_obj.get("entity_columns"):
+                    ent_name4, ecols, tbl = ent_obj["name"], ent_obj["entity_columns"], ent_obj["table_name"]
+                    for fv in re.finditer(r"\b(selectOne|selectList|selectCount|exists|count)\s*\(", body):
+                        region = _stmt_to_semicolon(body, fv.start())
+                        if re.search(r"new\s+\w*Wrapper", region):
+                            continue  # Wrapper 传参形态走 2a/2c，这里只管字段值形态
+                        cond_fnames = [m2.group(1)[0].lower() + m2.group(1)[1:]
+                                       for m2 in re.finditer(
+                                           rf"{re.escape(c['base_entity'])}::get(\w+)", region)
+                                       if (m2.group(1)[0].lower() + m2.group(1)[1:]) in ecols]
+                        if not cond_fnames:
+                            continue
+                        where4 = " AND ".join(f"{ecols[f]} = ?" for f in dict.fromkeys(cond_fnames))
+                        marker = lambda fname: f"{tbl}.{ecols[fname]} ({ent_name4}.{fname})"
+                        if fv.group(1) in ("selectCount", "count", "exists"):
+                            text4 = f"SELECT COUNT(*) FROM {tbl} WHERE {where4}"
+                            cols4 = sorted({marker(f) for f in cond_fnames})
+                        else:
+                            text4 = f"SELECT * FROM {tbl} WHERE {where4}"
+                            cols4 = sorted(marker(f) for f in ecols)
+                        out.append({"owner": owner, "via": "mp-wrapper", "kind": "SELECT",
+                                    "text": text4, "tables": [tbl], "columns": cols4})
     return out
 
 
@@ -1269,8 +1299,13 @@ def parse_java(path):
         "is_controller": bool(re.search(r"@RestController\b", class_ann)
                               or re.search(r"@Controller\b", class_ann)) and kind == "class",
         # \b 词边界：@MapperScan/@RestControllerAdvice 含 @Mapper/@RestController 子串，
-        # 不加边界会把启动类/异常处理器误判成 Mapper/Controller（litemall 实测踩中）
-        "is_mapper": cname.endswith("Mapper") or bool(re.search(r"@Mapper\b", class_ann)),
+        # 不加边界会把启动类/异常处理器误判成 Mapper/Controller（litemall 实测踩中）。
+        # MapStruct 的 @Mapper 与 MyBatis @Mapper 撞名（ruoyi-vue-pro 数千个 *Convert
+        # 接口带 @Mapper(componentModel="spring")）：按 import 归属区分，
+        # extends BaseMapper 的除外（MapStruct 转换器不会继承它）
+        "is_mapper": ((cname.endswith("Mapper") or bool(re.search(r"@Mapper\b", class_ann)))
+                      and not (re.search(r"import\s+org\.mapstruct\.Mapper\s*;", head_raw)
+                               and not re.search(r"BaseMapper\w*\s*<", extends))),
         "is_service_impl": cname.endswith("Impl") or bool(re.search(r"@Service\b", class_ann)),
         "is_entity": table_name is not None,
     }
@@ -1907,8 +1942,10 @@ def main():
         json.dump(data, f, ensure_ascii=False, indent=2)
 
     print(f"[OK] 扫描 {len(java_files)} 个 Java 文件，{len(classes)} 个类，{len(routes)} 条路由")
+    # 按 is_mapper 类统计，而非类名含 "Mapper"——*Dao 命名的 mapper（renren-fast）会被漏计
+    mapper_cls_names = {c["name"] for c in classes.values() if c["is_mapper"]}
     print(f"[OK] 事务闭包: {len(tx_inside)} 个方法 | 实体: {len(entities)} 个 | "
-          f"逆向索引: {sum(1 for k in rindex if 'Mapper#' in k)} 个 Mapper 方法")
+          f"逆向索引: {sum(1 for k in rindex if k.split('#', 1)[0] in mapper_cls_names)} 个 Mapper 方法")
     print(f"[OK] 地图已生成: {OUT}")
     print(f"[OK] JSON 已生成: {OUT_JSON}")
 

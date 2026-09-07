@@ -1,8 +1,8 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-08T05:50:31",
-    "classes": 22,
+    "generated_at": "2026-09-08T06:19:44",
+    "classes": 23,
     "controllers": 5,
     "mappers": 5,
     "entities": 5,
@@ -748,6 +748,18 @@
           }
         },
         {
+          "name": "selectByIdX",
+          "params": "Long id",
+          "sql": null,
+          "reverse": null
+        },
+        {
+          "name": "selectByNicknameField",
+          "params": "String nickname",
+          "sql": null,
+          "reverse": null
+        },
+        {
           "name": "selectById",
           "params": "(MP 内置)",
           "sql": {
@@ -1286,6 +1298,44 @@
           "path": "/api/v1/wallet/lambda"
         }
       ],
+      "file": "src\\main\\java\\com\\demo\\mapper\\UserMapper.java"
+    },
+    {
+      "owner": "UserMapper#selectByIdX",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT * FROM users WHERE id = ?",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.create_time (User.createTime)",
+        "users.id (User.id)",
+        "users.nickname (User.nickname)",
+        "users.openid (User.openid)",
+        "users.wallet_balance (User.walletBalance)"
+      ],
+      "in_tx": false,
+      "routes": [],
+      "file": "src\\main\\java\\com\\demo\\mapper\\UserMapper.java"
+    },
+    {
+      "owner": "UserMapper#selectByNicknameField",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT * FROM users WHERE nickname = ?",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.create_time (User.createTime)",
+        "users.id (User.id)",
+        "users.nickname (User.nickname)",
+        "users.openid (User.openid)",
+        "users.wallet_balance (User.walletBalance)"
+      ],
+      "in_tx": false,
+      "routes": [],
       "file": "src\\main\\java\\com\\demo\\mapper\\UserMapper.java"
     },
     {

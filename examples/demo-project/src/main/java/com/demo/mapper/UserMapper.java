@@ -34,4 +34,14 @@ public interface UserMapper extends BaseMapper<User> {
                 .eq(User::getNickname, nickname)
                 .list();
     }
+
+    // yudao 风格的 X 后缀 Wrapper（LambdaQueryWrapperX）
+    default List<User> selectByIdX(Long id) {
+        return selectList(new LambdaQueryWrapperX<User>().eq(User::getId, id));
+    }
+
+    // 字段值便捷方法：selectOne(Entity::getField, value)（yudao/BaseMapperPlus 风格）
+    default User selectByNicknameField(String nickname) {
+        return selectOne(User::getNickname, nickname);
+    }
 }
