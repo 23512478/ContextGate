@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-07 02:07:25
-- 扫描类: 15 个 | Controller: 4 个 | Mapper: 4 个 | 实体: 4 个 | HTTP 路由: 10 条 | 调用图边: 16 个方法
+- 生成时间: 2026-09-08 01:26:33
+- 扫描类: 20 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 12 条 | 调用图边: 20 个方法
 
 ---
 
@@ -31,6 +31,18 @@
 ### `GET /api/v1/orders/search`
 **OrderController#search**
    ├─ OrderServiceImpl#searchByTitle  （组件/工具）
+
+### `GET /api/v1/products`
+**ProductController#list**
+   └─ ProductServiceImpl#list
+      ├─ ProductMapper#selectAll  → @SELECT 自定义SQL
+      │     `SELECT * FROM product ORDER BY create_time DESC`
+
+### `POST /api/v1/products/purchase`
+**ProductController#purchase**
+   └─ ProductServiceImpl#purchase  [@Transactional]
+      ├─ ProductMapper#deductStock  → @UPDATE 自定义SQL ✍️写
+      │     `UPDATE product SET stock = stock - #{count} WHERE id = #{id}`
 
 ### `GET /api/v1/stats/orders/sum`
 **StatsController#orderSum**
@@ -64,6 +76,20 @@
   - 涉及表: `orders`, `users`
   - 触碰列: `orders.amount (Order.amount)`, `orders.create_time (Order.createTime)`, `orders.id (Order.id)`, `orders.status (Order.status)`, `orders.title (Order.title)`, `orders.user_id (Order.userId)`, `users.id (User.id)`, `users.nickname (User.nickname)`
   - ↑ 上游路由: `GET /api/v1/orders/my`
+- **ProductMapper#selectById** — @SELECT
+  - SQL: `SELECT * FROM product WHERE id = #{id}`
+  - 涉及表: `product`
+  - 触碰列: `product.create_time (Product.createTime)`, `product.id (Product.id)`, `product.name (Product.name)`, `product.price (Product.price)`, `product.stock (Product.stock)`
+- **ProductMapper#selectAll** — @SELECT
+  - SQL: `SELECT * FROM product ORDER BY create_time DESC`
+  - 涉及表: `product`
+  - 触碰列: `product.create_time (Product.createTime)`, `product.id (Product.id)`, `product.name (Product.name)`, `product.price (Product.price)`, `product.stock (Product.stock)`
+  - ↑ 上游路由: `GET /api/v1/products`
+- **ProductMapper#deductStock** — @UPDATE
+  - SQL: `UPDATE product SET stock = stock - #{count} WHERE id = #{id}`
+  - 涉及表: `product`
+  - 触碰列: `product.id (Product.id)`, `product.stock (Product.stock)`
+  - ↑ 上游路由: `POST /api/v1/products/purchase`
 - **UserMapper#selectByOpenid** — @SELECT
   - SQL: `SELECT * FROM users WHERE openid = #{openid}`
   - 涉及表: `users`
@@ -85,17 +111,24 @@
 ### 事务入口（声明处）
 
 - `OrderServiceImpl#create`  (`src\main\java\com\demo\service\OrderServiceImpl.java`)
+- `ProductServiceImpl#purchase`  (`src\main\java\com\demo\service\impl\ProductServiceImpl.java`)
 
 ### 事务闭包内的方法（在同一事务里执行，出错会一起回滚）
 
 ```
 OrderMapper#insert
+ProductMapper#deductStock
 UserMapper#selectById
+return#setAmount
+return#setStatus
+return#setTitle
+return#setUserId
 ```
 
 ### 事务内的数据库写操作（✍️ 出错回滚的关键路径）
 
 - `OrderServiceImpl#create` → `OrderMapper#insert` ✍️
+- `ProductServiceImpl#purchase` → `ProductMapper#deductStock` ✍️
 
 ---
 
@@ -123,6 +156,14 @@ UserMapper#selectById
 - 被自定义 SQL 触碰: 1 处
   - `OrderMapper#selectMyOrders`（波及 1 条路由）
 
+### Product → 表 `product`（5 个字段）
+
+- 字段: `id`→`id`, `name`→`name`, `price`→`price`, `stock`→`stock`, `createTime`→`create_time`
+- 被自定义 SQL 触碰: 3 处
+  - `ProductMapper#selectById`（波及 0 条路由）
+  - `ProductMapper#selectAll`（波及 1 条路由）
+  - `ProductMapper#deductStock`（波及 1 条路由）
+
 ### User → 表 `users`（5 个字段）
 
 - 字段: `id`→`id`, `openid`→`openid`, `nickname`→`nickname`, `walletBalance`→`wallet_balance`, `createTime`→`create_time`
@@ -142,6 +183,12 @@ UserMapper#selectById
 - **UserMapper#addBalance** ← 1 条路由 
   - 直接调用者: `WalletController#recharge`
   - `POST /api/v1/wallet/recharge`
+- **ProductMapper#selectAll** ← 1 条路由 
+  - 直接调用者: `ProductServiceImpl#list`
+  - `GET /api/v1/products`
+- **ProductMapper#deductStock** ← 1 条路由 
+  - 直接调用者: `ProductServiceImpl#purchase`
+  - `POST /api/v1/products/purchase`
 - **OrderMapper#selectMyOrders** ← 1 条路由 
   - 直接调用者: `OrderServiceImpl#listMyOrders`
   - `GET /api/v1/orders/my`

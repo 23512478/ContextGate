@@ -238,99 +238,80 @@ def mp_builtin_sql_record(method_name, entity):
 
 
 def parse_xml_mappers(resources_dir, table_to_entity, entity_by_simple):
-    """扫描 src/main/resources/mapper/**/*.xml，解析 <resultMap>/<sql> 片段、
-    做 <include refid> 替换，给 <select>/<insert>/<update>/<delete> 补一份 sql 记录。
-    返回 {f"{MapperClass}#{methodId}": sql_record}；没 XML 文件就返回 {}。
-    只用 stdlib ElementTree，不引入外部依赖。"""
+    """扫描 src/main/resources/mapper/**/*.xml。返回 {MapperClass#methodId: sql_record}。"""
     mapper_dir = os.path.join(resources_dir, "mapper")
     if not os.path.isdir(mapper_dir):
         return {}
-    import xml.etree.ElementTree as ET
     out = {}
     for dirpath, _dn, filenames in os.walk(mapper_dir):
         for fn in filenames:
-            if not fn.endswith(".xml"):
-                continue
-            path = os.path.join(dirpath, fn)
-            try:
-                tree = ET.parse(path)
-            except ET.ParseError:
-                # 损坏的 XML 文件直接跳过，不中断整体扫描
-                continue
-            root = tree.getroot()
-            ns = root.get("namespace", "")
-            # com.xxx.SysUserMapper → SysUserMapper；空 namespace 没法匹配 Java 接口，等同跳过
-            mapper_class = ns.rsplit(".", 1)[-1] if ns else ""
-            if not mapper_class:
-                continue
-            # 第一遍：收集 <sql id> 片段
-            fragments = {}
-            for sf in root.findall("sql"):
-                fid = sf.get("id")
-                if fid:
-                    fragments[fid] = " ".join(sf.itertext()).strip()
-            # 第二遍：收集 <resultMap>（column → property 映射 + 关联实体）
-            result_maps = {}
-            for rm in root.findall("resultMap"):
-                rid = rm.get("id")
-                if not rid:
-                    continue
-                rtype = (rm.get("type") or "").rsplit(".", 1)[-1]
-                col_prop = {}
-                for r in rm.findall("result"):
-                    c = r.get("column")
-                    p = r.get("property")
-                    if c and p:
-                        col_prop[c] = p
-                for r in rm.findall("id"):  # <id column="..." property="..."/>
-                    c = r.get("column")
-                    p = r.get("property")
-                    if c and p:
-                        col_prop[c] = p
-                result_maps[rid] = (rtype, col_prop)
-            # 第三遍：四类语句
-            for tag, kind in (("select", "SELECT"), ("insert", "INSERT"),
-                              ("update", "UPDATE"), ("delete", "DELETE")):
-                for stmt in root.findall(tag):
-                    mid = stmt.get("id")
-                    if not mid:
-                        continue
-                    # <include refid="x"/> 替换成 <sql id="x"> 片段文本，再剥标签
-                    raw_xml = ET.tostring(stmt, encoding="unicode")
+            if fn.endswith(".xml"):
+                out.update(_parse_xml_file(os.path.join(dirpath, fn),
+                                           table_to_entity, entity_by_simple))
+    return out
 
-                    def _inc(m):
-                        return fragments.get(m.group(1), m.group(0))
 
-                    raw_xml = re.sub(r'<include\s+refid="([^"]+)"\s*/>', _inc, raw_xml)
-                    sql_text = re.sub(r"<[^>]+>", " ", raw_xml)
-                    sql_text = re.sub(r"\s+", " ", sql_text).strip()
-                    # <set>/<if> 动态标签剥掉后可能留下 ", WHERE" 这种残尾，清掉
-                    sql_text = re.sub(r",\s+(?=WHERE|ORDER|GROUP|LIMIT)", " ", sql_text,
-                                      flags=re.IGNORECASE)
-                    tables = list(dict.fromkeys(t.lower() for t in SQL_TABLE_RE.findall(sql_text)))
-                    primary_table = tables[0] if tables else None
-                    # 列触碰先走统一解析（字面列名 + SELECT * / 别名星号 + 跨表 JOIN 列）
-                    cols = resolve_sql_columns(sql_text, tables, table_to_entity)
-                    # 有 resultMap：它显式声明的列也算触碰（property 就是 Java 字段名）
-                    rm_attr = stmt.get("resultMap")
-                    if rm_attr and rm_attr in result_maps:
-                        rtype, col_prop = result_maps[rm_attr]
-                        r_ent = entity_by_simple.get(rtype)
-                        if r_ent and r_ent.get("entity_columns"):
-                            tname = r_ent["table_name"]
-                            for c, prop in col_prop.items():
-                                cols.append(f"{tname}.{c} ({r_ent['name']}.{prop})")
-                        else:
-                            t = primary_table or ""
-                            for c, prop in col_prop.items():
-                                cols.append(f"{t}.{c} ({rtype}.{prop})")
-                    out[f"{mapper_class}#{mid}"] = {
-                        "kind": kind,
-                        "text": sql_text,
-                        "tables": tables,
-                        "columns": sorted(set(cols)),
-                        "mp_builtin": False,
-                    }
+def _parse_xml_file(path, table_to_entity, entity_by_simple):
+    """解析单个 MyBatis mapper XML 文件，返回 {MapperClass#methodId: sql_record}。"""
+    import xml.etree.ElementTree as ET
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError:
+        return {}
+    root = tree.getroot()
+    ns = root.get("namespace", "")
+    mapper_class = ns.rsplit(".", 1)[-1] if ns else ""
+    if not mapper_class:
+        return {}
+    out = {}
+    # <sql id> 片段
+    fragments = {sf.get("id"): " ".join(sf.itertext()).strip()
+                 for sf in root.findall("sql") if sf.get("id")}
+    # <resultMap> 列映射
+    result_maps = {}
+    for rm in root.findall("resultMap"):
+        rid = rm.get("id")
+        if not rid:
+            continue
+        rtype = (rm.get("type") or "").rsplit(".", 1)[-1]
+        col_prop = {}
+        for tag in ("id", "result"):
+            for r in rm.findall(tag):
+                c, p = r.get("column"), r.get("property")
+                if c and p:
+                    col_prop[c] = p
+        result_maps[rid] = (rtype, col_prop)
+    # 四类 SQL 语句
+    for tag, kind in (("select", "SELECT"), ("insert", "INSERT"),
+                      ("update", "UPDATE"), ("delete", "DELETE")):
+        for stmt in root.findall(tag):
+            mid = stmt.get("id")
+            if not mid:
+                continue
+            raw_xml = ET.tostring(stmt, encoding="unicode")
+            raw_xml = re.sub(r'<include\s+refid="([^"]+)"\s*/>',
+                             lambda m: fragments.get(m.group(1), m.group(0)), raw_xml)
+            sql_text = re.sub(r"<[^>]+>", " ", raw_xml)
+            sql_text = re.sub(r"\s+", " ", sql_text).strip()
+            sql_text = re.sub(r",\s+(?=WHERE|ORDER|GROUP|LIMIT)", " ", sql_text,
+                              flags=re.IGNORECASE)
+            tables = list(dict.fromkeys(t.lower() for t in SQL_TABLE_RE.findall(sql_text)))
+            cols = resolve_sql_columns(sql_text, tables, table_to_entity)
+            rm_attr = stmt.get("resultMap")
+            if rm_attr and rm_attr in result_maps:
+                rtype, col_prop = result_maps[rm_attr]
+                r_ent = entity_by_simple.get(rtype)
+                if r_ent and r_ent.get("entity_columns"):
+                    tname = r_ent["table_name"]
+                    for c, prop in col_prop.items():
+                        cols.append(f"{tname}.{c} ({r_ent['name']}.{prop})")
+                elif tables:
+                    for c, prop in col_prop.items():
+                        cols.append(f"{tables[0]}.{c} ({rtype}.{prop})")
+            out[f"{mapper_class}#{mid}"] = {
+                "kind": kind, "text": sql_text, "tables": tables,
+                "columns": sorted(set(cols)), "mp_builtin": False,
+            }
     return out
 
 
@@ -703,6 +684,8 @@ FIELD_RE = re.compile(
     r"(?:private|protected|public)\s+"
     r"(?:static\s+|final\s+)*"
     rf"({_TYPE})\s+(\w+)\s*;"
+    r"|(?:static\s+|final\s+)*"
+    rf"({_TYPE})\s+(\w+)\s*;"
 )
 # @TableField("显式列名") private Type field;
 TABLE_FIELD_RE = re.compile(
@@ -757,13 +740,25 @@ def parse_java(path):
     # 字段：字段名 -> 类型简单名（全限定名/泛型/数组归一化，如 java.math.BigDecimal -> BigDecimal）
     fields = {}
     for fm in FIELD_RE.finditer(body_clean):
-        fields[fm.group(2)] = simple_type(fm.group(1))
+        # 分组 1/2 = 带访问修饰符；分组 3/4 = 不带（包私有）
+        ftype = fm.group(1) or fm.group(3)
+        fname = fm.group(2) or fm.group(4)
+        if fname and ftype:
+            fields[fname] = simple_type(ftype)
 
     # 实体信息：@TableName + 字段 -> 列名（MP 驼峰转下划线，@TableField 显式覆盖）
     table_name = None
     tm = re.search(r'@TableName\(\s*(?:value\s*=\s*)?"([^"]+)"', head_raw)
     if tm:
         table_name = tm.group(1)
+    # 原生 MyBatis 兜底：model/domain/entity 包下的普通类（无 @TableName）也算实体，
+    # 表名由类名驼峰转下划线推断（MyBatis Generator 风格）
+    if table_name is None and kind == "class":
+        pkg_parts = (pkg or "").split(".")
+        if any(p in pkg_parts for p in ("model", "domain", "entity", "entities", "pojo", "beans")):
+            # 排除明显不是实体的：带 Example/Criteria/Param/Query/VO/DTO/BO 后缀的
+            if not re.search(r"(Example|Criteria|Param|Query|Vo|VO|Dto|DTO|Bo|BO|Wrapper)$", cname):
+                table_name = camel_to_snake(cname)
     entity_columns = None
     if table_name and kind == "class":
         cols = {}
@@ -928,16 +923,22 @@ def build_call_graph(classes, by_simple, impl_of):
     return graph
 
 
-def tx_closure(graph, by_simple):
+def tx_closure(graph, by_simple, impl_of):
     """事务闭包：@Transactional 方法 + 它们在同一事务里能触达的所有下游调用。
-    语义依据 Spring REQUIRED 传播：事务内调用的下游代码也在事务里。"""
+    语义依据 Spring REQUIRED 传播：事务内调用的下游代码也在事务里。
+    同时处理接口方法上的 @Transactional：传播到其实现类的同名方法。"""
     seeds = set()
     for c in by_simple.values():
-        if c["kind"] != "class":
-            continue
         for m in c["methods"]:
-            if m["transactional"]:
+            if not m["transactional"]:
+                continue
+            if c["kind"] == "class":
                 seeds.add((c["name"], m["name"]))
+            elif c["kind"] == "interface":
+                # 接口方法标了 @Transactional：找实现类同名方法作为种子
+                impl_name = impl_of.get(c["name"])
+                if impl_name:
+                    seeds.add((impl_name, m["name"]))
     inside = set(seeds)
     stack = list(seeds)
     while stack:
@@ -989,12 +990,24 @@ def main():
     classes = {}
     by_simple = {}
     java_files = []
-    for dirpath, dirnames, filenames in os.walk(JAVA_SRC):
+    # 支持多模块：ROOT 下所有 src/main/java 目录都扫（单模块项目就是一个）
+    src_roots = set()
+    if os.path.isdir(JAVA_SRC):
+        src_roots.add(JAVA_SRC)
+    for dirpath, dirnames, _fn in os.walk(ROOT):
         if os.sep + "target" + os.sep in dirpath + os.sep:
+            dirnames[:] = []
             continue
-        for fn in filenames:
-            if fn.endswith(".java"):
-                java_files.append(os.path.join(dirpath, fn))
+        if dirpath.endswith(os.path.join("src", "main", "java")):
+            src_roots.add(dirpath)
+            dirnames[:] = []  # 不再深入，src/main/java 下没有子模块
+    for src in src_roots:
+        for dirpath, dirnames, filenames in os.walk(src):
+            if os.sep + "target" + os.sep in dirpath + os.sep:
+                continue
+            for fn in filenames:
+                if fn.endswith(".java"):
+                    java_files.append(os.path.join(dirpath, fn))
 
     for jf in java_files:
         info = parse_java(jf)
@@ -1040,7 +1053,7 @@ def main():
 
     # 调用图 + 事务闭包
     graph = build_call_graph(classes, by_simple, impl_of)
-    tx_seeds, tx_inside = tx_closure(graph, by_simple)
+    tx_seeds, tx_inside = tx_closure(graph, by_simple, impl_of)
 
     # 实体 -> 表 -> SQL 联动
     entities = [c for c in classes.values() if c["is_entity"]]
@@ -1072,7 +1085,21 @@ def main():
 
     # XML mapper 解析（campus-job 零 XML → 这里返回 {}，下游一切照旧）
     table_to_entity_for_xml = {c["table_name"]: c for c in entities}
-    xml_stmts = parse_xml_mappers(RESOURCES, table_to_entity_for_xml, by_simple)
+    xml_stmts = {}
+    # 多模块：扫所有 src/main/resources 和 src/main/java 下的 .xml
+    # （MyBatis 允许 XML 与 Mapper 接口同目录放置）
+    for dirpath, _dn, filenames in os.walk(ROOT):
+        if os.sep + "target" + os.sep in dirpath + os.sep:
+            continue
+        in_java = os.sep + os.path.join("src", "main", "java") + os.sep in dirpath + os.sep
+        in_res = os.sep + os.path.join("src", "main", "resources") + os.sep in dirpath + os.sep
+        if not (in_java or in_res):
+            continue
+        for fn in filenames:
+            if not fn.endswith(".xml"):
+                continue
+            path = os.path.join(dirpath, fn)
+            xml_stmts.update(_parse_xml_file(path, table_to_entity_for_xml, by_simple))
 
     # 逆向索引
     rindex = reverse_index(graph, routes)

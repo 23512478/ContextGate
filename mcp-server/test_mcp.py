@@ -203,6 +203,20 @@ def main():
         assert "JdbcTemplate" in out_find_inline and "StatsService#topWallets" in out_find_inline, \
             "find_sql 应能反查 JdbcTemplate 裸 SQL"
 
+        # 7.15 原生 MyBatis 实体（无 @TableName，model 包）能被识别 + 字段级影响面
+        out_prod = call_tool(proc, "impact", {"entity": "Product", "field": "stock"})
+        assert "Product" in out_prod and "stock" in out_prod, \
+            "无 @TableName 的原生 MyBatis 实体应能被识别并支持字段级影响面"
+        assert "ProductMapper#deductStock" in out_prod, \
+            "UPDATE product SET stock... 应计入 Product.stock 影响面"
+
+        # 7.16 接口方法上的 @Transactional 应传播到实现类（trace_call 显示事务标记）
+        out_tx_iface = call_tool(proc, "trace_call", {"query": "POST /api/v1/products/purchase"})
+        assert "[@Transactional]" in out_tx_iface or "事务" in out_tx_iface, \
+            "接口方法 @Transactional 应传播到 impl，trace_call 应显示事务标记"
+        assert "ProductMapper#deductStock" in out_tx_iface, \
+            "purchase 链路应追到 ProductMapper#deductStock"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

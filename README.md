@@ -33,7 +33,7 @@ Spring Boot + MyBatis 项目的调用关系大量是**隐式约定**：一个 HT
 - **变更影响面**：改实体/字段前查出波及的自定义 SQL、MyBatis-Plus 内置 CRUD 调用点（`selectById`=SELECT * 全列触碰）、上游路由
 - **一键刷新**：代码改完让 AI 调 `refresh_map`，秒级重跑分析器
 
-已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入、`@Transactional` 闭包传播、注解 SQL（`@Select/@Update/...`）与 XML mapper（`<resultMap>`/`<sql>`+`<include>`/`<set>`/`<if>`）、`@TableName/@TableField` 实体映射、MyBatis-Plus `BaseMapper` 内置方法、全限定类型字段（`java.math.BigDecimal`）、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列的别名限定精确归因。仓库自带的 `examples/demo-project` 是一个 12 个 Java 文件 + XML 的迷你项目，以上每种规则都有对应夹具和回归断言。
+已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`/`<sql>`+`<include>`/`<set>`/`<if>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链）、实体映射（`@TableName/@TableField` **或** model/domain 包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（20 个 Java 文件 + XML），每种规则都有夹具和回归断言。
 
 ## 目录结构
 
@@ -119,7 +119,7 @@ python mcp-server/test_mcp.py
 三种参与方式，按难度排序：
 
 1. **拿你的项目跑一把，报漏报**（最有价值）：`python analyzer/framework_map.py <你的项目>`，对照 `framework_map.md` 找"这条链路/这个字段明明用了却没出现"的地方，提 issue 附一小段 Java/XML 源码即可。
-2. **补解析规则**：已知排队中的规则——Wrapper 跨语句链式调用与 `.select()` 子查询、类级 SQL 常量、XML `<association>`/`<collection>`/`<foreach>`/resultMap `extends`、多模块 Maven 路径。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
+2. **补解析规则**：已知排队中的规则——Wrapper 跨语句链式调用与 `.select()` 子查询、类级 SQL 常量、XML `<association>`/`<collection>`/`<foreach>`/resultMap `extends`、MyBatis Generator 的 `Example` 动态条件。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
 3. **适配更多 AI 工具 / 语言**：MCP 是标准协议，接入新工具基本零成本；分析器目前只覆盖 Java 侧。
 
 ## License

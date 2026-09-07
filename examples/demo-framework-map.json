@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-07T02:07:25",
-    "classes": 15,
-    "controllers": 4,
-    "mappers": 4,
-    "entities": 4,
-    "routes": 10
+    "generated_at": "2026-09-08T01:26:33",
+    "classes": 20,
+    "controllers": 5,
+    "mappers": 5,
+    "entities": 5,
+    "routes": 12
   },
   "routes": [
     {
@@ -44,6 +44,18 @@
       "path": "/api/v1/orders/search",
       "controller": "OrderController",
       "handler": "search"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/products",
+      "controller": "ProductController",
+      "handler": "list"
+    },
+    {
+      "method": "POST",
+      "path": "/api/v1/products/purchase",
+      "controller": "ProductController",
+      "handler": "purchase"
     },
     {
       "method": "GET",
@@ -296,6 +308,86 @@
       ]
     },
     {
+      "class": "ProductMapper",
+      "base_entity": null,
+      "methods": [
+        {
+          "name": "selectById",
+          "params": "Long id",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT * FROM product WHERE id = #{id}",
+            "tables": [
+              "product"
+            ],
+            "columns": [
+              "product.create_time (Product.createTime)",
+              "product.id (Product.id)",
+              "product.name (Product.name)",
+              "product.price (Product.price)",
+              "product.stock (Product.stock)"
+            ]
+          },
+          "reverse": null
+        },
+        {
+          "name": "selectAll",
+          "params": "",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT * FROM product ORDER BY create_time DESC",
+            "tables": [
+              "product"
+            ],
+            "columns": [
+              "product.create_time (Product.createTime)",
+              "product.id (Product.id)",
+              "product.name (Product.name)",
+              "product.price (Product.price)",
+              "product.stock (Product.stock)"
+            ]
+          },
+          "reverse": {
+            "direct_callers": [
+              "ProductServiceImpl#list"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/products"
+              }
+            ]
+          }
+        },
+        {
+          "name": "deductStock",
+          "params": "Long id, Integer count",
+          "sql": {
+            "kind": "UPDATE",
+            "text": "UPDATE product SET stock = stock - #{count} WHERE id = #{id}",
+            "tables": [
+              "product"
+            ],
+            "columns": [
+              "product.id (Product.id)",
+              "product.stock (Product.stock)"
+            ]
+          },
+          "reverse": {
+            "direct_callers": [
+              "ProductServiceImpl#purchase"
+            ],
+            "routes": [
+              {
+                "method": "POST",
+                "path": "/api/v1/products/purchase"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
       "class": "UserMapper",
       "base_entity": "User",
       "methods": [
@@ -437,6 +529,17 @@
       }
     },
     {
+      "name": "Product",
+      "table": "product",
+      "columns": {
+        "id": "id",
+        "name": "name",
+        "price": "price",
+        "stock": "stock",
+        "createTime": "create_time"
+      }
+    },
+    {
       "name": "User",
       "table": "users",
       "columns": {
@@ -513,6 +616,30 @@
         "is_db_write": false
       },
       {
+        "kind": "component",
+        "class": "return",
+        "method": "setUserId",
+        "is_db_write": false
+      },
+      {
+        "kind": "component",
+        "class": "return",
+        "method": "setTitle",
+        "is_db_write": false
+      },
+      {
+        "kind": "component",
+        "class": "return",
+        "method": "setAmount",
+        "is_db_write": false
+      },
+      {
+        "kind": "component",
+        "class": "return",
+        "method": "setStatus",
+        "is_db_write": false
+      },
+      {
         "kind": "mapper",
         "class": "OrderMapper",
         "method": "insert",
@@ -533,6 +660,38 @@
         "class": "OrderMapper",
         "method": "selectList",
         "is_db_write": false
+      }
+    ],
+    "ProductController#list": [
+      {
+        "kind": "service",
+        "class": "ProductServiceImpl",
+        "method": "list",
+        "is_db_write": false
+      }
+    ],
+    "ProductController#purchase": [
+      {
+        "kind": "service",
+        "class": "ProductServiceImpl",
+        "method": "purchase",
+        "is_db_write": false
+      }
+    ],
+    "ProductServiceImpl#list": [
+      {
+        "kind": "mapper",
+        "class": "ProductMapper",
+        "method": "selectAll",
+        "is_db_write": false
+      }
+    ],
+    "ProductServiceImpl#purchase": [
+      {
+        "kind": "mapper",
+        "class": "ProductMapper",
+        "method": "deductStock",
+        "is_db_write": true
       }
     ],
     "StatsController#orderSum": [
@@ -586,12 +745,19 @@
   },
   "transactional": {
     "seeds": [
-      "OrderServiceImpl#create"
+      "OrderServiceImpl#create",
+      "ProductServiceImpl#purchase"
     ],
     "inside_closure": [
       "OrderMapper#insert",
       "OrderServiceImpl#create",
-      "UserMapper#selectById"
+      "ProductMapper#deductStock",
+      "ProductServiceImpl#purchase",
+      "UserMapper#selectById",
+      "return#setAmount",
+      "return#setStatus",
+      "return#setTitle",
+      "return#setUserId"
     ]
   },
   "hidden_entries": [
