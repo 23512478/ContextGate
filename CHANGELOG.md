@@ -6,6 +6,9 @@
 
 ### 新增
 
+- **真实项目训练（第三轮：OneBlog / newbee-mall-cloud / renren-security / pig / yudao-cloud）**
+  - 验证轮：零新增缺陷，前两轮规则全部经受住跨仓库验证——pig 5 处懒加载子查询链接正确产出；yudao-cloud（与 ruoyi-vue-pro 同源不同仓库）识别 1628 条 Wrapper 记录，helper 归并/X-Wrapper/字段值规则跨仓库一致复现
+  - 残缺仅 2 个声明无实现的死代码方法（OneBlog SysLogMapper / xzs UserMapper），非分析器问题
 - **真实项目训练（第二轮：snowy / xmall / favorites-web / xzs / dax-pay）**
   - ServiceImpl/BaseManager 继承式调用：`extends ServiceImpl<M, T>` / `BaseManager<M, T>` 的服务层不再要求注入 mapper 字段，`this.list()`/`remove()`/`getById()` 等 17 个继承方法映射到泛型 M 的 baseMapper 内置方法（snowy 逆向索引 4 → 200，事务闭包 339 → 480）
   - Manager 层字段值调用：BaseManager 派生类里 `this.findByField(Entity::getField, value)` 合成 WHERE（dax-pay 内嵌 SQL 2 → 52 条）；DELETE/UPDATE 语义按调用动词细分
