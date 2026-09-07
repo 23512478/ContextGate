@@ -44,4 +44,52 @@
         WHERE id = #{id}
     </update>
 
+    <!-- <foreach> 批量条件：open/separator/close 属性应被重建，IN (…) 形状保留 -->
+    <select id="listByRatings">
+        SELECT id, order_id, rating, content FROM comments
+        WHERE rating IN
+        <foreach collection="ratings" item="r" open="(" separator="," close=")">
+            #{r}
+        </foreach>
+        ORDER BY create_time DESC
+    </select>
+
+    <!-- resultMap extends 回归：父映射的聚合别名列（review_count）应流入子 resultMap。
+         COUNT() AS review_count 经 AS 剥离后文本归因拿不到该列，只有继承来的映射能归因。 -->
+    <resultMap id="commentBaseMap" type="com.demo.entity.Comment">
+        <id     column="id"           property="id"/>
+        <result column="review_count" property="content"/>
+    </resultMap>
+    <resultMap id="commentExtMap" type="com.demo.entity.Comment" extends="commentBaseMap">
+        <result column="rating" property="rating"/>
+    </resultMap>
+    <select id="selectBrief" resultMap="commentExtMap">
+        SELECT c.id, c.rating, COUNT(r2.id) AS review_count
+        FROM comments c
+        LEFT JOIN comments r2 ON r2.order_id = c.id
+        GROUP BY c.id, c.rating
+    </select>
+
+    <!-- association/collection 嵌套回归：嵌套里的 id/result 列应归因到
+         javaType/ofType 对应的实体表（users / comments），而非外层 resultMap 类型。
+         mask / reply_count 是表达式别名，文本归因拿不到，只有嵌套映射能归因。 -->
+    <resultMap id="commentWithUserMap" type="com.demo.entity.Comment" extends="commentResultMap">
+        <association property="user" javaType="com.demo.entity.User">
+            <id     column="uid"  property="id"/>
+            <result column="mask" property="openid"/>
+        </association>
+        <collection property="replies" ofType="com.demo.entity.Comment">
+            <result column="reply_count" property="rating"/>
+        </collection>
+    </resultMap>
+    <select id="selectWithUser" resultMap="commentWithUserMap">
+        SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time,
+               u.id AS uid,
+               MD5(u.openid) AS mask,
+               COUNT(*) AS reply_count
+        FROM comments c
+        LEFT JOIN users u ON c.user_id = u.id
+        GROUP BY c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id
+    </select>
+
 </mapper>

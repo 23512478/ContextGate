@@ -36,14 +36,15 @@ Spring Boot + MyBatis 项目的调用关系大量是**隐式约定**：一个 HT
 - **SQL 反查**：按 Mapper 方法名 / 表名 / 列名片段搜 SQL，给出 SQL 全文、涉及表、触碰列、上游调用者和路由
 - **变更影响面**：改实体/字段前查出波及的自定义 SQL、MyBatis-Plus 内置 CRUD 调用点（`selectById`=SELECT * 全列触碰）、上游路由
 - **一键刷新**：代码改完让 AI 调 `refresh_map`，秒级重跑分析器
+- **多项目**：配置 `CODECONTEXT_MAPS_DIR` 后一个 server 管多个项目——`refresh_map` 自动注册、查询工具 `project` 参数切换、`list_maps` 列出全部项目和地图新鲜度
 
-已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`/`<sql>`+`<include>`/`<set>`/`<if>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链）、实体映射（`@TableName/@TableField` **或** model/domain/entity 等包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（20 个 Java 文件 + XML），每种规则都有夹具和回归断言。
+已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`（含 `extends` 继承、`<association>`/`<collection>` 嵌套映射）/`<sql>`+`<include>`/`<set>`/`<if>`/`<foreach>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参和类级 `static final` 常量、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链、**Wrapper 拆变量跨语句链式调用**）、实体映射（`@TableName/@TableField` **或** model/domain/entity 等包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（20 个 Java 文件 + XML），每种规则都有夹具和回归断言。
 
 ## 目录结构
 
 ```
 analyzer/      零依赖静态分析器（纯标准库 Python），产出 framework_map.md / .json
-mcp-server/    MCP Server（FastMCP），暴露 trace_call / find_sql / impact / refresh_map
+mcp-server/    MCP Server（FastMCP），暴露 trace_call / find_sql / impact / list_maps / refresh_map
 examples/
   demo-project/         迷你 Spring Boot 项目（测试夹具，覆盖各种 SQL 形态）
   demo-framework-map.*  分析 demo 项目产出的示例地图
@@ -93,6 +94,18 @@ Trae：在你的 Spring Boot 项目根目录放 `.trae/mcp.json`；Cursor：写�
 
 > Windows 下 `command` 填你的 python.exe 完整路径更稳。不配置 env 也能跑：server 默认用仓库自带的 demo 地图（`examples/demo-framework-map.json`），零配置即可体验。
 
+### 多项目模式（可选）
+
+默认一个 server 服务一个项目。要同时管多个项目，给 env 加一个 `CODECONTEXT_MAPS_DIR` 指向地图目录：
+
+```json
+"env": { "CODECONTEXT_MAPS_DIR": "<放地图的目录，如 ~/.contextgate/maps>" }
+```
+
+之后对 AI 说"刷新一下 xxx 项目"（`refresh_map` 传项目路径），地图就按项目目录名落盘 `<项目名>.json` 并注册；查询时说"在 mall 项目里查这条 SQL"（查询工具带 `project` 参数）即可切换，`list_maps` 列出全部项目和地图新鲜度。
+
+不想动配置也可以一个项目起一个 server 实例（各配各的 env），工具名会带实例前缀，AI 按项目选用——个人两三个项目够用。
+
 ### 4. 零配置体验 / 跑测试
 
 ```bash
@@ -112,9 +125,10 @@ python mcp-server/test_mcp.py
 
 - **正则级解析，不是真 Java AST**：复杂语法（内部类、Lombok 生成方法等）可能漏，遇到再补规则
 - **MyBatis-Plus 内置方法给的是实体级上界**：`selectById` 标"触碰全部列"是安全的过近似（宁多报不漏报），不区分业务实际读了哪几列
-- **Wrapper / JdbcTemplate 是语句级识别**：Wrapper 拆成变量后跨语句链式调用（`var w = new LambdaQueryWrapper<>(); w.eq(...)`）只识别构造语句；JdbcTemplate 的 SQL 常量抽成类级 `static final` 字段目前不追踪（方法内局部 `String sql = ...` 支持）
-- **XML 复杂结构未覆盖**：`<association>`/`<collection>` 嵌套映射、`<foreach>` 批量、resultMap `extends` 继承目前不解析（demo 夹具覆盖了 resultMap/sql/include/set/if 这些主流写法）
-- 目前一份地图对应一个项目；多项目切换靠 env 配置
+- **Wrapper 跨语句只支持单变量直链**：定义/续链/消费点分离的写法可解析（分支内续链保守计入）；`w2 = w` 拷贝别名、把 Wrapper 传给别的方法再继续链式调用不追
+- **SQL 常量只收纯字面量拼接**：类级 `static final String` 支持，常量互拼（`SQL_A + SQL_B`）、运行期拼参静态拿不到
+- **XML 懒加载子查询未追踪**：`<association select=...>`/`<collection select=...>` 的 N+1 子查询模式暂不解析（嵌套 resultMap 的列归因已支持）
+- **MyBatis Generator 的 `Example` 动态条件暂未解析**
 
 ## 参与进来
 

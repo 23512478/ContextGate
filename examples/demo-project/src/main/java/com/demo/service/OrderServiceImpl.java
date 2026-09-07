@@ -48,4 +48,15 @@ public class OrderServiceImpl {
                 .orderByDesc(Order::getCreateTime);
         return orderMapper.selectList(wrapper);
     }
+
+    /** Wrapper 拆成变量跨语句链式调用：定义、分支续链、消费点分离（验证 def-use 重建）。 */
+    public List<Order> searchOrdersFlexible(String keyword, Integer status, boolean recentOnly) {
+        LambdaQueryWrapper<Order> w = new LambdaQueryWrapper<>();
+        w.like(keyword != null, Order::getTitle, keyword);
+        if (recentOnly) {
+            w.gt(Order::getCreateTime, "2026-01-01");
+        }
+        w.eq(Order::getStatus, status);
+        return orderMapper.selectList(w);
+    }
 }

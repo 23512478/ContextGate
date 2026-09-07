@@ -251,6 +251,68 @@ def parse_xml_mappers(resources_dir, table_to_entity, entity_by_simple):
     return out
 
 
+# 内层 foreach（body 里不再嵌 <foreach>）；逐层替换实现嵌套展开
+_FOREACH_INNER_RE = re.compile(
+    r"<foreach\b([^>]*)>((?:(?!<foreach)(?!</foreach>).)*)</foreach>", re.S)
+
+
+def _expand_foreach(raw_xml):
+    """把 <foreach collection item open separator close>…</foreach> 重建成 SQL 片段：
+    open + 内部文本 + close。separator 的重复次数运行期才定，静态保留一份内部文本
+    即可保住 IN (…) 的形状和 #{item} 占位。内层先替换、循环到无 <foreach>，嵌套也能展开。"""
+    prev = None
+    while prev != raw_xml:
+        prev = raw_xml
+
+        def _repl(m):
+            attrs, body = m.group(1), m.group(2)
+
+            def attr(name):
+                am = re.search(rf'\b{name}="([^"]*)"', attrs)
+                return am.group(1) if am else ""
+
+            inner = re.sub(r"<[^>]+>", " ", body)  # 内部的 <if> 等子标签照旧剥掉
+            parts = [p for p in (attr("open"), inner.strip(), attr("close")) if p]
+            return " ".join(parts)
+
+        raw_xml = _FOREACH_INNER_RE.sub(_repl, raw_xml)
+    return raw_xml
+
+
+def _collect_result_map(rm):
+    """递归收集一个 <resultMap> 的列映射。
+    返回 (rtype, col_prop, nested)：
+      col_prop = {column: property}    顶层 id/result（归因给 resultMap type 实体）
+      nested   = [(column, property, 嵌套类型简单名)]
+                                       association/collection 里的映射（归因给
+                                       javaType/ofType 对应实体，可能是另一张表）"""
+    rtype = (rm.get("type") or "").rsplit(".", 1)[-1]
+    col_prop, nested = {}, []
+
+    def walk(node, ntype=None):
+        for el in node:
+            tag = el.tag
+            if tag in ("id", "result"):
+                c, p = el.get("column"), el.get("property")
+                if not c:
+                    continue
+                if ntype:
+                    nested.append((c, p or "", ntype))
+                elif p:
+                    col_prop[c] = p
+            elif tag in ("association", "collection"):
+                sub_type = (el.get("javaType") or el.get("ofType") or "").rsplit(".", 1)[-1]
+                if not sub_type:
+                    continue  # 无法确定嵌套类型，放弃归因
+                c = el.get("column")
+                if c:
+                    nested.append((c, el.get("property") or "", sub_type))
+                walk(el, sub_type)
+
+    walk(rm)
+    return rtype, col_prop, nested
+
+
 def _parse_xml_file(path, table_to_entity, entity_by_simple):
     """解析单个 MyBatis mapper XML 文件，返回 {MapperClass#methodId: sql_record}。"""
     import xml.etree.ElementTree as ET
@@ -267,20 +329,38 @@ def _parse_xml_file(path, table_to_entity, entity_by_simple):
     # <sql id> 片段
     fragments = {sf.get("id"): " ".join(sf.itertext()).strip()
                  for sf in root.findall("sql") if sf.get("id")}
-    # <resultMap> 列映射
-    result_maps = {}
+    # <resultMap> 列映射（含 extends 继承与 association/collection 嵌套）
+    raw_maps, rm_extends = {}, {}
     for rm in root.findall("resultMap"):
         rid = rm.get("id")
         if not rid:
             continue
-        rtype = (rm.get("type") or "").rsplit(".", 1)[-1]
-        col_prop = {}
-        for tag in ("id", "result"):
-            for r in rm.findall(tag):
-                c, p = r.get("column"), r.get("property")
-                if c and p:
-                    col_prop[c] = p
-        result_maps[rid] = (rtype, col_prop)
+        raw_maps[rid] = _collect_result_map(rm)
+        rm_extends[rid] = rm.get("extends")
+
+    resolved = {}
+
+    def resolve_rm(rid, chain=()):
+        """extends 链合并：父映射先并入，子覆盖同名列；chain 防循环引用。"""
+        if rid in resolved:
+            return resolved[rid]
+        info = raw_maps.get(rid)
+        if not info or rid in chain:
+            return ("", {}, [])
+        rtype, cols, nested = info
+        ext = rm_extends.get(rid)
+        if ext and ext in raw_maps:
+            prtype, pcols, pnested = resolve_rm(ext, chain + (rid,))
+            rtype = rtype or prtype
+            merged = dict(pcols)
+            merged.update(cols)
+            cols = merged
+            nested = pnested + nested
+        resolved[rid] = (rtype, cols, nested)
+        return resolved[rid]
+
+    for rid in raw_maps:
+        resolve_rm(rid)
     # 四类 SQL 语句
     for tag, kind in (("select", "SELECT"), ("insert", "INSERT"),
                       ("update", "UPDATE"), ("delete", "DELETE")):
@@ -291,15 +371,18 @@ def _parse_xml_file(path, table_to_entity, entity_by_simple):
             raw_xml = ET.tostring(stmt, encoding="unicode")
             raw_xml = re.sub(r'<include\s+refid="([^"]+)"\s*/>',
                              lambda m: fragments.get(m.group(1), m.group(0)), raw_xml)
+            raw_xml = _expand_foreach(raw_xml)
             sql_text = re.sub(r"<[^>]+>", " ", raw_xml)
             sql_text = re.sub(r"\s+", " ", sql_text).strip()
-            sql_text = re.sub(r",\s+(?=WHERE|ORDER|GROUP|LIMIT)", " ", sql_text,
+            # <set>/<if> 剥离后残留的尾逗号清理；必须带词边界，否则
+            # "id, order_id" 里 order_id 的 order 前缀会被误当 ORDER 关键字吃掉逗号
+            sql_text = re.sub(r",\s+(?=WHERE\b|ORDER\b|GROUP\b|LIMIT\b)", " ", sql_text,
                               flags=re.IGNORECASE)
             tables = list(dict.fromkeys(t.lower() for t in SQL_TABLE_RE.findall(sql_text)))
             cols = resolve_sql_columns(sql_text, tables, table_to_entity)
             rm_attr = stmt.get("resultMap")
-            if rm_attr and rm_attr in result_maps:
-                rtype, col_prop = result_maps[rm_attr]
+            if rm_attr and rm_attr in resolved:
+                rtype, col_prop, nested = resolved[rm_attr]
                 r_ent = entity_by_simple.get(rtype)
                 if r_ent and r_ent.get("entity_columns"):
                     tname = r_ent["table_name"]
@@ -308,6 +391,11 @@ def _parse_xml_file(path, table_to_entity, entity_by_simple):
                 elif tables:
                     for c, prop in col_prop.items():
                         cols.append(f"{tables[0]}.{c} ({rtype}.{prop})")
+                # 嵌套映射归因到 javaType/ofType 对应的实体表（可能与外层不同表）
+                for c, prop, ntype in nested:
+                    n_ent = entity_by_simple.get(ntype)
+                    if prop and n_ent and n_ent.get("entity_columns"):
+                        cols.append(f"{n_ent['table_name']}.{c} ({n_ent['name']}.{prop})")
             out[f"{mapper_class}#{mid}"] = {
                 "kind": kind, "text": sql_text, "tables": tables,
                 "columns": sorted(set(cols)), "mp_builtin": False,
@@ -325,6 +413,11 @@ _JDBC_CALL_RE = re.compile(
 _LOCAL_STR_RE = re.compile(
     r"(?:[;{}]\s*|^\s*)(?:final\s+)?String\s+(\w+)\s*=\s*((?:\"(?:[^\"\\]|\\.)*\"\s*(?:\+\s*)?)+)",
     re.MULTILINE)
+# 类级 static String 常量（static final / final static）：JdbcTemplate 常把 SQL 抽成常量字段。
+# 只收纯字符串字面量拼接；引用其他常量的拼接（SQL_A + SQL_B）静态拿不到，不收。
+_STATIC_STR_RE = re.compile(
+    r"\b(?:static\s+(?:final\s+)?|final\s+static\s+)String\s+(\w+)\s*=\s*"
+    r"((?:\"(?:[^\"\\]|\\.)*\"\s*(?:\+\s*)?)+);")
 # new LambdaQueryWrapper<User>( / new QueryWrapper<User>(
 _WRAPPER_NEW_RE = re.compile(
     r"new\s+(LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)\s*<\s*(\w+)\s*>\s*\(")
@@ -384,6 +477,90 @@ def _stmt_to_semicolon(text, start):
     return text[start:end if end >= 0 else len(text)]
 
 
+# Wrapper 变量的跨语句 def-use：定义 / 消费动词
+_WRAP_TYPES = {"LambdaQueryWrapper", "LambdaUpdateWrapper", "QueryWrapper", "UpdateWrapper"}
+_WRAPPER_DECL_RE = re.compile(
+    r"(?:final\s+)?(\w+)(?:\s*<\s*(\w+)\s*>)?\s+(\w+)\s*=\s*new\s+"
+    r"(LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)"
+    r"\s*(?:<\s*(\w+)?\s*>)?\s*\(")
+# 消费点：BaseMapper / IService 上接收 Wrapper 的方法
+_CONSUME_VERBS = {"selectlist", "selectone", "selectcount", "selectpage", "selectmaps",
+                  "selectmapspage", "selectobjs", "list", "getone", "count", "page",
+                  "remove", "delete", "update", "saveorupdate", "exists"}
+
+
+def _split_statements(body):
+    """把方法体切成语句片段：; { } 都是分隔符（块结构不参与 def-use，分支内续链
+    保守计入），字符串字面量里的分隔符跳过。返回语句文本列表（不含分隔符）。"""
+    stmts, buf = [], []
+    in_str = False
+    i, n = 0, len(body)
+    while i < n:
+        ch = body[i]
+        if in_str:
+            if ch == "\\":
+                buf.append(body[i:i + 2])
+                i += 2
+                continue
+            if ch == '"':
+                in_str = False
+            buf.append(ch)
+        elif ch == '"':
+            in_str = True
+            buf.append(ch)
+        elif ch in ";{}":
+            stmts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+        i += 1
+    tail = "".join(buf)
+    if tail.strip():
+        stmts.append(tail)
+    return stmts
+
+
+def _wrapper_defuse(owner, body, cls, ent_by_simple, table_to_entity):
+    """Wrapper 拆成变量跨语句链式调用的 def-use 重建：
+      定义   XxxWrapper<Entity> w = new XxxWrapper<>()（实体：构造泛型 > 声明泛型）
+      续链   w.like(...) / w = w.eq(...)（if/for 分支内续链保守计入，宁多报不漏报）
+      消费   orderMapper.selectList(w) 等——把该变量攒下的全部链文本拼成 region
+    交给 _wrapper_record 合成 SQL；消费后链重置（变量可复用）。
+    只支持单变量直链：w2 = w 拷贝别名、跨方法传递不追。"""
+    ent, chains, recs = {}, {}, []
+    for raw_stmt in _split_statements(body):
+        stmt = raw_stmt.strip()
+        if not stmt:
+            continue
+        # 定义
+        dm = _WRAPPER_DECL_RE.match(stmt)
+        if dm:
+            decl_type, decl_ent, var, wtype, ctor_ent = dm.groups()
+            entity = ctor_ent or (decl_ent if decl_type in _WRAP_TYPES else None)
+            if entity:
+                ent[var] = (wtype, entity)
+                chains[var] = [stmt]
+                continue
+        # 与已定义变量相关的语句
+        touched = [v for v in ent if re.search(r"\b" + re.escape(v) + r"\b", stmt)]
+        for var in touched:
+            wtype, entity = ent[var]
+            if re.match(re.escape(var) + r"\s*[.=]", stmt):
+                # 续链 / 重新赋值续链
+                chains[var].append(stmt)
+                continue
+            # 消费点：接收者调用了消费动词，且变量作为参数传入
+            vm = re.search(r"\.\s*(\w+)\s*\(", stmt)
+            if vm and vm.group(1).lower() in _CONSUME_VERBS:
+                region = ";\n".join(chains[var] + [stmt])
+                rec = _wrapper_record(owner, region, wtype, entity,
+                                      ent_by_simple, table_to_entity)
+                if rec:
+                    recs.append(rec)
+                chains[var] = []  # 消费后链重置，变量可复用
+    return recs
+
+
 def scan_inline_sql(classes, by_simple, table_to_entity):
     """扫所有方法体里的两类「不走 Mapper 接口」的 SQL：
       1. JdbcTemplate 裸 SQL：jdbcTemplate.update("INSERT ...") / queryForList("SELECT ...")
@@ -419,10 +596,17 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                 api = jm.group(1).lower()
                 sql = _leading_concat_strings(body, jm.end())
                 if not sql:
-                    # 首参是变量：找局部 String 变量定义
-                    arg_m = re.match(r"\s*(\w+)\b", body[jm.end():])
-                    if arg_m and arg_m.group(1) in local_str:
-                        sql = local_str[arg_m.group(1)]
+                    # 首参不是字面量：局部变量 → 本类 static 常量 → 其他类常量（Foo.SQL_X）
+                    arg_m = re.match(r"\s*([\w.]+)\b", body[jm.end():])
+                    name = arg_m.group(1) if arg_m else ""
+                    if "." in name:
+                        cls_name, const_name = name.rsplit(".", 1)
+                        ref = by_simple.get(cls_name.rsplit(".", 1)[-1])
+                        sql = (ref or {}).get("static_strs", {}).get(const_name)
+                    elif name in local_str:
+                        sql = local_str[name]
+                    else:
+                        sql = c.get("static_strs", {}).get(name)
                 if not sql or not re.search(r"\b(select|insert|update|delete|create|alter|drop)\b",
                                             sql, re.IGNORECASE):
                     continue
@@ -440,8 +624,15 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                             "text": sql, "tables": tables, "columns": sorted(set(cols))})
 
             # ---- 2) MP Wrapper 动态链 ----
-            # 2a) new XxxWrapper<Entity>( ... 链到分号
+            # 2a) 单语句内联链：new XxxWrapper<Entity>( ... 链到分号。
+            #     赋值给变量的构造语句跳过（跨语句的完整链由 2c 的 def-use 重建，
+            #     否则会多报一条只有构造语句的不完整记录）
             for wm in _WRAPPER_NEW_RE.finditer(body):
+                seg_start = max(body.rfind(";", 0, wm.start()),
+                                body.rfind("{", 0, wm.start()),
+                                body.rfind("}", 0, wm.start()))
+                if re.search(r"=\s*$", body[seg_start + 1:wm.start()]):
+                    continue
                 wtype, ent_name = wm.group(1), wm.group(2)
                 rec = _wrapper_record(owner, _stmt_to_semicolon(body, wm.start()),
                                       wtype, ent_name, ent_by_simple, table_to_entity)
@@ -457,6 +648,8 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                                       wtype, ent_name, ent_by_simple, table_to_entity)
                 if rec:
                     out.append(rec)
+            # 2c) 跨语句 def-use：Wrapper 拆成变量，定义/续链/消费分离的写法
+            out.extend(_wrapper_defuse(owner, body, c, ent_by_simple, table_to_entity))
     return out
 
 
@@ -748,6 +941,13 @@ def parse_java(path):
         if fname and ftype and ftype.strip() not in RET_KEYWORDS:
             fields[fname] = simple_type(ftype)
 
+    # 类级 static String 常量的字符串值：必须在 body_raw 上收（body_clean 里字面量已被抹白）
+    static_strs = {}
+    for ssm in _STATIC_STR_RE.finditer(body_raw):
+        txt = _leading_concat_strings(body_raw, ssm.start(2))
+        if txt:
+            static_strs[ssm.group(1)] = txt
+
     # 实体信息：@TableName + 字段 -> 列名（MP 驼峰转下划线，@TableField 显式覆盖）
     table_name = None
     tm = re.search(r'@TableName\(\s*(?:value\s*=\s*)?"([^"]+)"', head_raw)
@@ -830,6 +1030,7 @@ def parse_java(path):
         "extends": extends,
         "implements": implements,
         "fields": fields,
+        "static_strs": static_strs,
         "methods": methods,
         "class_ann": class_ann,
         "file": path,

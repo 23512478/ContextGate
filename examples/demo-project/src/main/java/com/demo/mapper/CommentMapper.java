@@ -20,4 +20,13 @@ public interface CommentMapper extends BaseMapper<Comment> {
 
     // 对应 XML <update id="updateContent">：<set> 动态 SQL
     int updateContent(Long id, String content);
+
+    // 对应 XML <select id="listByRatings">：<foreach> 批量条件
+    List<Comment> listByRatings(List<Integer> ratings);
+
+    // 对应 XML <select id="selectBrief">：resultMap extends
+    List<Comment> selectBrief(Long userId);
+
+    // 对应 XML <select id="selectWithUser">：association/collection 嵌套映射
+    List<Comment> selectWithUser(Long orderId);
 }

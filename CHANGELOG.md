@@ -2,6 +2,19 @@
 
 本仓库的所有重要变更都会记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [未发布]
+
+### 新增
+
+- XML mapper 解析增强：`<foreach>` 批量条件重建（保留 `IN (…)` 形状与参数占位）、resultMap `extends` 继承合并（父映射流入子映射）、`<association>`/`<collection>` 嵌套映射的列归因到 javaType/ofType 对应实体
+- JdbcTemplate 的 SQL 抽成类级 `static final` String 常量可解析（支持字面量拼接与 `Foo.SQL_X` 跨类引用；常量互拼不追）
+- MyBatis-Plus Wrapper 拆变量跨语句链式调用：定义/续链/消费点分离的写法可拼出完整合成 SQL，if 分支内续链保守计入（单变量直链）
+- MCP Server 多项目模式：新增 `CODECONTEXT_MAPS_DIR` 地图目录，`refresh_map` 按项目目录名自动注册，三个查询工具新增 `project` 参数，新增 `list_maps` 工具
+
+### 修复
+
+- XML 语句列清单的逗号清理会误伤 `order_id` 这类列名（`order` 前缀被误当 ORDER 关键字），补词边界
+
 ## [v0.1.0] — 2026-09-08
 
 首个公开发布版本。经过 campus-job（私有项目）、mall、vhr 三个真实 Spring Boot + MyBatis 项目验证，核心链路可用。

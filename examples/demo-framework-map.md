@@ -1,16 +1,28 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-08 03:22:57
-- 扫描类: 20 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 12 条 | 调用图边: 20 个方法
+- 生成时间: 2026-09-08 04:22:15
+- 扫描类: 20 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 17 条 | 调用图边: 27 个方法
 
 ---
 
 ## 一、HTTP 路由调用链
 
+### `GET /api/v1/comments/brief/{userId}`
+**CommentController#brief**
+   ├─ CommentMapper#selectBrief  （Mapper 方法，SQL 未找到）
+
 ### `GET /api/v1/comments/order/{orderId}`
 **CommentController#listByOrder**
    ├─ CommentMapper#listByOrderId  （Mapper 方法，SQL 未找到）
+
+### `GET /api/v1/comments/ratings`
+**CommentController#byRatings**
+   ├─ CommentMapper#listByRatings  （Mapper 方法，SQL 未找到）
+
+### `GET /api/v1/comments/with-user/{orderId}`
+**CommentController#withUser**
+   ├─ CommentMapper#selectWithUser  （Mapper 方法，SQL 未找到）
 
 ### `GET /api/v1/comments/{id}`
 **CommentController#detail**
@@ -32,6 +44,10 @@
 **OrderController#search**
    ├─ OrderServiceImpl#searchByTitle  （组件/工具）
 
+### `GET /api/v1/orders/search-flexible`
+**OrderController#searchFlexible**
+   ├─ OrderServiceImpl#searchOrdersFlexible  （组件/工具）
+
 ### `GET /api/v1/products`
 **ProductController#list**
    └─ ProductServiceImpl#list
@@ -43,6 +59,11 @@
    └─ ProductServiceImpl#purchase  [@Transactional]
       ├─ ProductMapper#deductStock  → @UPDATE 自定义SQL ✍️写
       │     `UPDATE product SET stock = stock - #{count} WHERE id = #{id}`
+
+### `GET /api/v1/stats/openid/count`
+**StatsController#openidCount**
+   └─ StatsService#demoOpenidCount
+      ├─ JdbcTemplate#queryForObject  （组件/工具）
 
 ### `GET /api/v1/stats/orders/sum`
 **StatsController#orderSum**
@@ -191,9 +212,18 @@ UserMapper#selectById
 - **CommentMapper#updateContent** ← 1 条路由 
   - 直接调用者: `CommentController#update`
   - `PATCH /api/v1/comments/{id}`
+- **CommentMapper#selectWithUser** ← 1 条路由 
+  - 直接调用者: `CommentController#withUser`
+  - `GET /api/v1/comments/with-user/{orderId}`
 - **CommentMapper#selectDetail** ← 1 条路由 
   - 直接调用者: `CommentController#detail`
   - `GET /api/v1/comments/{id}`
+- **CommentMapper#selectBrief** ← 1 条路由 
+  - 直接调用者: `CommentController#brief`
+  - `GET /api/v1/comments/brief/{userId}`
+- **CommentMapper#listByRatings** ← 1 条路由 
+  - 直接调用者: `CommentController#byRatings`
+  - `GET /api/v1/comments/ratings`
 - **CommentMapper#listByOrderId** ← 1 条路由 
   - 直接调用者: `CommentController#listByOrder`
   - `GET /api/v1/comments/order/{orderId}`
@@ -217,6 +247,10 @@ UserMapper#selectById
   - `SELECT * FROM orders WHERE title = ? AND status = ? ORDER BY create_time`
   - 涉及表: `orders`
   - 上游路由: `GET /api/v1/orders/search`
+- **OrderServiceImpl#searchOrdersFlexible** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\OrderServiceImpl.java`)
+  - `SELECT * FROM orders WHERE title = ? AND create_time = ? AND status = ?`
+  - 涉及表: `orders`
+  - 上游路由: `GET /api/v1/orders/search-flexible`
 - **StatsService#topWallets** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
   - `SELECT id, nickname, wallet_balance FROM users ORDER BY wallet_balance DESC LIMIT 10`
   - 涉及表: `users`
@@ -225,3 +259,7 @@ UserMapper#selectById
   - `SELECT COALESCE(SUM(amount), 0) AS total FROM orders`
   - 涉及表: `orders`
   - 上游路由: `GET /api/v1/stats/orders/sum`
+- **StatsService#demoOpenidCount** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT COUNT(*) AS openid_total FROM users WHERE openid = 'demo-openid'`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/stats/openid/count`

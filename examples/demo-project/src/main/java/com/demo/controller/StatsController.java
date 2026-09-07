@@ -26,4 +26,9 @@ public class StatsController {
     public Map<String, Object> orderSum() {
         return statsService.orderAmountSum();
     }
+
+    @GetMapping("/stats/openid/count")
+    public Long openidCount() {
+        return statsService.demoOpenidCount();
+    }
 }

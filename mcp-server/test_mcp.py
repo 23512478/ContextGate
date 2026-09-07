@@ -8,12 +8,14 @@ test_mcp.py — MCP Server 冒烟测试（零依赖，测试数据用仓库自�
 
 用法: python test_mcp.py
 （默认指向 examples 下的 demo 项目和 demo 地图；
-  可用环境变量 CONTEXTGATE_PROJECT / CONTEXTGATE_MAP 覆盖到你自己的项目）
+  可用环境变量 CODECONTEXT_PROJECT / CODECONTEXT_MAP 覆盖到你自己的项目）
 """
 import json
 import subprocess
 import sys
 import os
+import shutil
+import tempfile
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -25,9 +27,9 @@ ROOT = os.path.normpath(os.path.join(HERE, ".."))
 SERVER = os.path.join(HERE, "mcp_server.py")
 
 PROJECT = os.environ.get(
-    "CONTEXTGATE_PROJECT", os.path.join(ROOT, "examples", "demo-project"))
+    "CODECONTEXT_PROJECT", os.path.join(ROOT, "examples", "demo-project"))
 MAP = os.environ.get(
-    "CONTEXTGATE_MAP", os.path.join(ROOT, "examples", "demo-framework-map.json"))
+    "CODECONTEXT_MAP", os.path.join(ROOT, "examples", "demo-framework-map.json"))
 
 _id = 0
 
@@ -66,8 +68,8 @@ def call_tool(proc, name, arguments):
 def main():
     # 显式注入 demo 地图/项目，保证测试不受使用者全局环境变量影响
     env = dict(os.environ)
-    env["CONTEXTGATE_MAP"] = MAP
-    env["CONTEXTGATE_PROJECT"] = PROJECT
+    env["CODECONTEXT_MAP"] = MAP
+    env["CODECONTEXT_PROJECT"] = PROJECT
     proc = subprocess.Popen(
         [sys.executable, SERVER],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
@@ -89,7 +91,7 @@ def main():
         resp = send(proc, "tools/list", {})
         tools = [t["name"] for t in resp["result"]["tools"]]
         print(f"[工具列表] {tools}")
-        assert set(tools) >= {"trace_call", "find_sql", "impact", "refresh_map"}, "工具缺失"
+        assert set(tools) >= {"trace_call", "find_sql", "impact", "refresh_map", "list_maps"}, "工具缺失"
 
         # 3. trace_call: 路由查询（故意写错动词 POST，实测动词回退匹配）
         print("\n" + "=" * 70)
@@ -217,6 +219,42 @@ def main():
         assert "ProductMapper#deductStock" in out_tx_iface, \
             "purchase 链路应追到 ProductMapper#deductStock"
 
+        # 7.17 XML <foreach>：open/close 属性应重建，IN (…) 形状与列保留
+        out_foreach = call_tool(proc, "find_sql", {"query": "listByRatings"})
+        assert "IN ( #{r} )" in out_foreach, "<foreach> 的 open/close 应重建进 SQL 文本"
+        assert "comments.rating (Comment.rating)" in out_foreach, "<foreach> 条件列应保留"
+
+        # 7.18 resultMap extends：父映射的聚合别名列应流入子 resultMap
+        #      （COUNT() AS review_count 经 AS 剥离后文本归因拿不到，只有继承映射能归因）
+        out_ext = call_tool(proc, "find_sql", {"query": "selectBrief"})
+        assert "comments.review_count (Comment.content)" in out_ext, \
+            "extends 父映射的列应流入子 resultMap"
+
+        # 7.19 association/collection 嵌套：嵌套列应归因到 javaType/ofType 对应实体
+        out_assoc = call_tool(proc, "find_sql", {"query": "selectWithUser"})
+        assert "users.mask (User.openid)" in out_assoc, \
+            "association 嵌套列应归因到 User（而非外层 Comment）"
+        assert "comments.reply_count (Comment.rating)" in out_assoc, \
+            "collection 嵌套列应归因到 Comment"
+
+        # 7.20 回归：逗号清理不能吃掉 "id, order_id" 的逗号（order_id 的 order 前缀曾被误当 ORDER 关键字）
+        assert "id, order_id" in out_foreach, "列清单里的逗号不应被误清理"
+
+        # 7.21 类级 static final SQL 常量：JdbcTemplate 首参是常量名也应解析出 SQL 全文
+        out_const = call_tool(proc, "trace_call", {"query": "GET /api/v1/stats/openid/count"})
+        assert "(JdbcTemplate)" in out_const, "常量 SQL 应在调用链上标注 JdbcTemplate"
+        assert "openid_total" in out_const and "SQL_DEMO_OPENID" not in out_const, \
+            "应解析出 static final 常量里的 SQL 全文，而不是停在常量名"
+
+        # 7.22 Wrapper 拆变量跨语句链式调用：定义/分支续链/消费点分离应拼出完整条件
+        out_flex = call_tool(proc, "trace_call", {"query": "GET /api/v1/orders/search-flexible"})
+        assert "(MP Wrapper)" in out_flex, "跨语句 Wrapper 应在调用链上标注"
+        assert "title = ?" in out_flex and "create_time = ?" in out_flex and "status = ?" in out_flex, \
+            "if 分支内续链的 gt(create_time) 应与其他条件一起拼进合成 SQL"
+        out_flex_imp = call_tool(proc, "impact", {"entity": "Order", "field": "createTime"})
+        assert "searchOrdersFlexible" in out_flex_imp, \
+            "分支续链触碰的 create_time 应计入 Order 影响面"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")
@@ -228,6 +266,55 @@ def main():
     finally:
         proc.stdin.close()
         proc.wait(timeout=10)
+
+    # 9. 多项目模式：CODECONTEXT_MAPS_DIR 地图目录 + project 参数切换
+    maps_dir = tempfile.mkdtemp(prefix="contextgate_maps_")
+    try:
+        env2 = dict(os.environ)
+        env2["CODECONTEXT_MAPS_DIR"] = maps_dir
+        env2.pop("CODECONTEXT_MAP", None)
+        proc2 = subprocess.Popen(
+            [sys.executable, SERVER],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, encoding="utf-8", env=env2,
+        )
+        try:
+            send(proc2, "initialize", {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {},
+                "clientInfo": {"name": "smoke-test-multi", "version": "0.1"},
+            })
+            send(proc2, "notifications/initialized", {}, notify=True)
+
+            print("\n" + "=" * 70)
+            print("### 多项目模式：refresh_map 注册项目 → project 参数切换")
+            print("-" * 70)
+            out_lm0 = call_tool(proc2, "list_maps", {})
+            assert "地图目录为空" in out_lm0, "初始应为空地图目录"
+            # 注册 demo 项目（refresh_map 自动落盘 <项目名>.json）
+            out_rf = call_tool(proc2, "refresh_map", {"project_root": PROJECT})
+            assert "已注册" in out_rf, "多项目模式 refresh_map 应注册项目"
+            # project 参数查询（显式 + 省略）
+            out_tc = call_tool(proc2, "trace_call",
+                               {"query": "GET /api/v1/orders/my", "project": "demo-project"})
+            assert "OrderMapper#selectMyOrders" in out_tc, "显式 project 应能查询"
+            out_tc2 = call_tool(proc2, "trace_call", {"query": "GET /api/v1/orders/my"})
+            assert "OrderMapper#selectMyOrders" in out_tc2, "省略 project 应查活跃项目"
+            out_fs = call_tool(proc2, "find_sql", {"query": "wallet_balance", "project": "Demo-Project"})
+            assert "UserMapper#addBalance" in out_fs, "project 名大小写不敏感"
+            out_lm = call_tool(proc2, "list_maps", {})
+            print(out_lm)
+            assert "**demo-project** ← 活跃" in out_lm, "list_maps 应列出已注册项目并标活跃"
+            # 不存在的项目应给出可用列表
+            out_bad = call_tool(proc2, "impact", {"entity": "User", "project": "no-such"})
+            assert "可用项目" in out_bad and "demo-project" in out_bad, \
+                "未知项目应提示可用项目列表"
+            print("[多项目模式通过]")
+        finally:
+            proc2.stdin.close()
+            proc2.wait(timeout=10)
+    finally:
+        shutil.rmtree(maps_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

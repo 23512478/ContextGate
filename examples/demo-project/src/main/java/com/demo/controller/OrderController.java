@@ -33,4 +33,12 @@ public class OrderController {
     public List<Order> search(@RequestParam String keyword) {
         return orderService.searchByTitle(keyword);
     }
+
+    /** Wrapper 拆变量跨语句链式调用入口（验证 def-use 重建）。 */
+    @GetMapping("/orders/search-flexible")
+    public List<Order> searchFlexible(@RequestParam String keyword,
+                                      @RequestParam Integer status,
+                                      @RequestParam boolean recentOnly) {
+        return orderService.searchOrdersFlexible(keyword, status, recentOnly);
+    }
 }

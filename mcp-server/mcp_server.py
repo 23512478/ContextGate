@@ -5,14 +5,17 @@ mcp_server.py — ContextGate：框架语义 MCP Server
 
 把 analyzer 分析器产出的 framework_map.json 变成 AI 编程工具可直接调用的工具：
 
-  trace_call(query)       正向追踪：路由("GET /orders/my")或方法("OrderServiceImpl#create")
-                          → 完整框架调用链（Controller → Service → Mapper → SQL）
-  find_sql(query)         反查 SQL：Mapper 方法名或 SQL 片段 → SQL 全文 + 表 + 列 + 上游路由
-  impact(entity, field)   影响面：改实体/字段 → 波及的 SQL、路由、事务内写操作
-  refresh_map()           重新运行分析器刷新地图（代码改动后调一次）
+  trace_call(query, project)   正向追踪：路由("GET /orders/my")或方法("OrderServiceImpl#create")
+                               → 完整框架调用链（Controller → Service → Mapper → SQL）
+  find_sql(query, project)     反查 SQL：Mapper 方法名或 SQL 片段 → SQL 全文 + 表 + 列 + 上游路由
+  impact(entity, field, project) 影响面：改实体/字段 → 波及的 SQL、路由、事务内写操作
+  list_maps()                  列出地图目录里已注册的项目地图（多项目模式）
+  refresh_map(project_root)    重新运行分析器刷新地图（代码改动后调一次）
 
 数据源: framework_map.json（默认用仓库自带 examples/demo-framework-map.json，
-可用环境变量 CODECONTEXT_MAP 覆盖；refresh_map 用 CODECONTEXT_PROJECT 作为默认项目路径）
+可用环境变量 CODECONTEXT_MAP 覆盖；refresh_map 用 CODECONTEXT_PROJECT 作为默认项目路径）。
+多项目模式（可选）: 配置 CODECONTEXT_MAPS_DIR 指向一个地图目录，每个项目一张
+<项目名>.json，refresh_map 自动注册新项目，查询工具用 project 参数切换项目。
 """
 import json
 import os
@@ -35,26 +38,70 @@ DEFAULT_PROJECT = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "examples", "d
 
 MAP_PATH = os.environ.get("CODECONTEXT_MAP", DEFAULT_MAP)
 PROJECT_ROOT = os.environ.get("CODECONTEXT_PROJECT", DEFAULT_PROJECT)
+# 多项目模式（可选）：配置了地图目录后，每个项目一张 <项目名>.json，
+# refresh_map 自动注册新项目，查询工具用 project 参数在项目间切换
+MAPS_DIR = os.environ.get("CODECONTEXT_MAPS_DIR", "")
 
 HTTP_VERBS = {"GET", "POST", "PUT", "DELETE", "PATCH", "ANY"}
 
-_state = {"data": None}
+_state = {"maps": {}, "active": None}
+
+
+def _load_map_file(path):
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"地图文件不存在: {path}\n请先运行 analyzer/framework_map.py，或调用 refresh_map 工具生成。")
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
 
 def load_data():
-    """加载/重新加载地图 JSON。"""
-    if not os.path.exists(MAP_PATH):
-        raise FileNotFoundError(
-            f"地图文件不存在: {MAP_PATH}\n请先运行 analyzer/framework_map.py，或调用 refresh_map 工具生成。")
-    with open(MAP_PATH, "r", encoding="utf-8") as f:
-        _state["data"] = json.load(f)
-    return _state["data"]
+    """加载启动地图。多项目模式加载地图目录里全部 *.json（项目名取 meta.project）；
+    单地图模式加载 MAP_PATH。返回默认（活跃）地图。"""
+    _state["maps"] = {}
+    if MAPS_DIR and os.path.isdir(MAPS_DIR):
+        for fn in sorted(os.listdir(MAPS_DIR)):
+            if not fn.endswith(".json"):
+                continue
+            try:
+                d = _load_map_file(os.path.join(MAPS_DIR, fn))
+            except Exception:
+                continue
+            name = (d.get("meta") or {}).get("project") or fn[:-5]
+            _state["maps"][name] = d
+        if _state["maps"] and _state["active"] not in _state["maps"]:
+            _state["active"] = sorted(_state["maps"])[0]
+        return _state["maps"].get(_state["active"])
+    d = _load_map_file(MAP_PATH)
+    _state["maps"][MAP_PATH] = d
+    _state["active"] = MAP_PATH
+    return d
 
 
 def data():
-    if _state["data"] is None:
+    if _state["active"] is None or _state["active"] not in _state["maps"]:
         load_data()
-    return _state["data"]
+    return _state["maps"][_state["active"]]
+
+
+def _resolve_project(project):
+    """工具入口用：把可选 project 参数解析为本次查询的项目并设为活跃。
+    单地图模式 no-op；多项目模式下空串=当前活跃项目，找不到时抛 KeyError
+    （由各工具的兜底 except 转成可读提示）。"""
+    name = (project or "").strip()
+    if not MAPS_DIR:
+        return
+    if not name:
+        if _state["active"] is None:
+            load_data()
+        return
+    if name not in _state["maps"]:
+        hit = next((k for k in _state["maps"] if k.lower() == name.lower()), None)
+        if not hit:
+            avail = ", ".join(sorted(_state["maps"])) or "（地图目录为空，先调 refresh_map 生成）"
+            raise KeyError(f"项目 '{name}' 不在地图目录 {MAPS_DIR} 里。可用项目: {avail}")
+        name = hit
+    _state["active"] = name
 
 
 mcp = FastMCP("contextgate")
@@ -109,11 +156,13 @@ def mapper_sql_map():
 # ---------------------------------------------------------------- 工具1：正向追踪
 
 @mcp.tool()
-def trace_call(query: str) -> str:
+def trace_call(query: str, project: str = "") -> str:
     """正向追踪调用链。输入一个 HTTP 路由（如 "POST /orders/my"）或方法名
     （如 "BizOrderServiceImpl#create" 或裸方法名 "create"），
-    返回完整的框架调用链树：Controller → Service → Mapper → SQL，含事务标记。"""
+    返回完整的框架调用链树：Controller → Service → Mapper → SQL，含事务标记。
+    project: 多项目模式下的项目名（不传=当前活跃项目）。"""
     try:
+        _resolve_project(project)
         query = query.strip()
         start_nodes = []
         route_header = None
@@ -217,11 +266,13 @@ def trace_call(query: str) -> str:
 # ---------------------------------------------------------------- 工具2：反查 SQL
 
 @mcp.tool()
-def find_sql(query: str) -> str:
+def find_sql(query: str, project: str = "") -> str:
     """反查 SQL。输入 Mapper 方法名（如 "selectMyOrders"）或 SQL 片段
     （如 "wallet_balance"、"biz_order"），返回 SQL 全文、涉及表、触碰列、
-    上游调用者和路由。改 SQL 前必查。"""
+    上游调用者和路由。改 SQL 前必查。
+    project: 多项目模式下的项目名（不传=当前活跃项目）。"""
     try:
+        _resolve_project(project)
         q = query.strip()
         if not q:
             return "请输入 Mapper 方法名或 SQL 片段。"
@@ -279,11 +330,13 @@ def find_sql(query: str) -> str:
 # ---------------------------------------------------------------- 工具3：影响面
 
 @mcp.tool()
-def impact(entity: str, field: str = "") -> str:
+def impact(entity: str, field: str = "", project: str = "") -> str:
     """实体变更影响面。输入实体名（如 "SysUser"），可选字段名（如 "openid"）。
     返回：哪些自定义 SQL 会受影响、波及多少路由、哪些写操作在事务里、
-    有多少 MP 内置 CRUD 调用点。给实体加/删/改字段前必查。"""
+    有多少 MP 内置 CRUD 调用点。给实体加/删/改字段前必查。
+    project: 多项目模式下的项目名（不传=当前活跃项目）。"""
     try:
+        _resolve_project(project)
         ents = [e for e in data()["entities"] if e["name"].lower() == entity.strip().lower()]
         if not ents:
             names = ", ".join(e["name"] for e in data()["entities"])
@@ -428,13 +481,41 @@ def info_routes(key):
     return []
 
 
-# ---------------------------------------------------------------- 工具4：刷新地图
+# ---------------------------------------------------------------- 工具4：列出项目地图
+
+@mcp.tool()
+def list_maps() -> str:
+    """列出地图目录里已注册的项目地图（多项目模式）。
+    返回每个项目的路由/Mapper/实体数量与地图生成时间，以及当前活跃项目。
+    未配置 CODECONTEXT_MAPS_DIR 时为单地图模式。"""
+    try:
+        if not MAPS_DIR:
+            return (f"单地图模式（未配置 CODECONTEXT_MAPS_DIR 环境变量）。\n"
+                    f"当前地图: {MAP_PATH}")
+        if not _state["maps"]:
+            load_data()
+        if not _state["maps"]:
+            return f"地图目录为空: {MAPS_DIR}（用 refresh_map 生成第一张地图）"
+        out = [f"地图目录: {MAPS_DIR}", f"活跃项目: {_state['active']}", ""]
+        for name, d in sorted(_state["maps"].items()):
+            meta = d.get("meta") or {}
+            mark = " ← 活跃" if name == _state["active"] else ""
+            out.append(f"- **{name}**{mark}: {meta.get('routes', '?')} 路由 / "
+                       f"{meta.get('mappers', '?')} Mapper / "
+                       f"{meta.get('entities', '?')} 实体（{meta.get('generated_at', '?')}）")
+        return "\n".join(out)
+    except Exception as e:
+        return f"[list_maps 出错] {e}"
+
+
+# ---------------------------------------------------------------- 工具5：刷新地图
 
 @mcp.tool()
 def refresh_map(project_root: str = "") -> str:
     """重新运行分析器，刷新框架地图（代码改动后调用）。
     project_root 为 Spring Boot 项目根目录；若已通过环境变量
-    CODECONTEXT_PROJECT 配置过，可不传。"""
+    CODECONTEXT_PROJECT 配置过，可不传。多项目模式（CODECONTEXT_MAPS_DIR）
+    下按项目目录名落盘 <项目名>.json 并注册为活跃项目。"""
     try:
         root = project_root.strip() or PROJECT_ROOT
         if not root:
@@ -442,19 +523,34 @@ def refresh_map(project_root: str = "") -> str:
                     "或在 MCP 配置里设置环境变量 CODECONTEXT_PROJECT。")
         if not os.path.isdir(root):
             return f"项目目录不存在: {root}"
-        # 把分析结果写到当前地图位置（.json 换成 .md 作为分析器输出参数），
-        # 这样 refresh 后 load_data() 读到的一定是刚生成的地图
-        map_md = os.path.splitext(MAP_PATH)[0] + ".md"
+        if MAPS_DIR:
+            # 多项目：地图按项目目录名落盘到地图目录，注册并设为活跃
+            os.makedirs(MAPS_DIR, exist_ok=True)
+            name = os.path.basename(os.path.normpath(root))
+            map_md = os.path.join(MAPS_DIR, name + ".md")
+        else:
+            # 单地图：把分析结果写到当前地图位置（.json 换成 .md 作为分析器输出参数），
+            # 这样 refresh 后 load_data() 读到的一定是刚生成的地图
+            name = None
+            map_md = os.path.splitext(MAP_PATH)[0] + ".md"
         proc = subprocess.run(
             [sys.executable, DEFAULT_ANALYZER, root, map_md],
             capture_output=True, text=True, encoding="utf-8", timeout=120,
             stdin=subprocess.DEVNULL,
         )
         out = (proc.stdout or "") + (proc.stderr or "")
-        load_data()
-        meta = data()["meta"]
-        return (f"[refresh_map 完成]\n{out.strip()}\n"
-                f"当前地图: {meta['routes']} 路由 / {meta['mappers']} Mapper / "
+        if MAPS_DIR:
+            d = _load_map_file(os.path.join(MAPS_DIR, name + ".json"))
+            _state["maps"][name] = d
+            _state["active"] = name
+            meta = d["meta"]
+        else:
+            load_data()
+            meta = data()["meta"]
+        head = f"[refresh_map 完成]\n{out.strip()}\n"
+        if MAPS_DIR:
+            head += f"项目: {name}（已注册，设为活跃）\n"
+        return (head + f"当前地图: {meta['routes']} 路由 / {meta['mappers']} Mapper / "
                 f"{meta['entities']} 实体（{meta['generated_at']}）")
     except Exception as e:
         return f"[refresh_map 出错] {e}"
@@ -465,7 +561,11 @@ def refresh_map(project_root: str = "") -> str:
 if __name__ == "__main__":
     try:
         load_data()
-        print(f"[codecontext] 地图已加载: {MAP_PATH}", file=sys.stderr)
+        if MAPS_DIR:
+            print(f"[codecontext] 多项目模式，地图目录: {MAPS_DIR}，"
+                  f"已加载 {len(_state['maps'])} 个项目", file=sys.stderr)
+        else:
+            print(f"[codecontext] 地图已加载: {MAP_PATH}", file=sys.stderr)
     except FileNotFoundError as e:
         print(f"[codecontext] {e}", file=sys.stderr)
     mcp.run()  # stdio 传输，供 Trae/Cursor/Claude Code 等客户端拉起

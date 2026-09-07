@@ -26,4 +26,14 @@ public class StatsService {
         return jdbcTemplate.queryForMap(
                 "SELECT COALESCE(SUM(amount), 0) AS total FROM orders");
     }
+
+    /** 类级 SQL 常量：JdbcTemplate 常把 SQL 抽成 static final 字段（验证常量收集）。 */
+    private static final String SQL_DEMO_OPENID =
+            "SELECT COUNT(*) AS openid_total FROM users "
+            + "WHERE openid = 'demo-openid'";
+
+    /** 常量 SQL 统计：SQL 在类级 static final 常量里，方法内只传常量名。 */
+    public Long demoOpenidCount() {
+        return jdbcTemplate.queryForObject(SQL_DEMO_OPENID, Long.class);
+    }
 }

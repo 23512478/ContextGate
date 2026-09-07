@@ -1,19 +1,37 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-08T03:22:57",
+    "generated_at": "2026-09-08T04:22:15",
     "classes": 20,
     "controllers": 5,
     "mappers": 5,
     "entities": 5,
-    "routes": 12
+    "routes": 17
   },
   "routes": [
+    {
+      "method": "GET",
+      "path": "/api/v1/comments/brief/{userId}",
+      "controller": "CommentController",
+      "handler": "brief"
+    },
     {
       "method": "GET",
       "path": "/api/v1/comments/order/{orderId}",
       "controller": "CommentController",
       "handler": "listByOrder"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/comments/ratings",
+      "controller": "CommentController",
+      "handler": "byRatings"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/comments/with-user/{orderId}",
+      "controller": "CommentController",
+      "handler": "withUser"
     },
     {
       "method": "GET",
@@ -47,6 +65,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/orders/search-flexible",
+      "controller": "OrderController",
+      "handler": "searchFlexible"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/products",
       "controller": "ProductController",
       "handler": "list"
@@ -56,6 +80,12 @@
       "path": "/api/v1/products/purchase",
       "controller": "ProductController",
       "handler": "purchase"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stats/openid/count",
+      "controller": "StatsController",
+      "handler": "openidCount"
     },
     {
       "method": "GET",
@@ -178,6 +208,102 @@
               }
             ]
           }
+        },
+        {
+          "name": "listByRatings",
+          "params": "List<Integer> ratings",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT id, order_id, rating, content FROM comments WHERE rating IN ( #{r} ) ORDER BY create_time DESC",
+            "tables": [
+              "comments"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.create_time (Comment.createTime)",
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)"
+            ],
+            "mp_builtin": false
+          },
+          "reverse": {
+            "direct_callers": [
+              "CommentController#byRatings"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/comments/ratings"
+              }
+            ]
+          }
+        },
+        {
+          "name": "selectBrief",
+          "params": "Long userId",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT c.id, c.rating, COUNT(r2.id) AS review_count FROM comments c LEFT JOIN comments r2 ON r2.order_id = c.id GROUP BY c.id, c.rating",
+            "tables": [
+              "comments"
+            ],
+            "columns": [
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)",
+              "comments.review_count (Comment.content)"
+            ],
+            "mp_builtin": false
+          },
+          "reverse": {
+            "direct_callers": [
+              "CommentController#brief"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/comments/brief/{userId}"
+              }
+            ]
+          }
+        },
+        {
+          "name": "selectWithUser",
+          "params": "Long orderId",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id AS uid, MD5(u.openid) AS mask, COUNT(*) AS reply_count FROM comments c LEFT JOIN users u ON c.user_id = u.id GROUP BY c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id",
+            "tables": [
+              "comments",
+              "users"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.create_time (Comment.createTime)",
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)",
+              "comments.reply_count (Comment.rating)",
+              "comments.user_id (Comment.userId)",
+              "users.id (User.id)",
+              "users.mask (User.openid)",
+              "users.openid (User.openid)",
+              "users.uid (User.id)"
+            ],
+            "mp_builtin": false
+          },
+          "reverse": {
+            "direct_callers": [
+              "CommentController#withUser"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/comments/with-user/{orderId}"
+              }
+            ]
+          }
         }
       ]
     },
@@ -295,12 +421,17 @@
           },
           "reverse": {
             "direct_callers": [
-              "OrderServiceImpl#searchByTitle"
+              "OrderServiceImpl#searchByTitle",
+              "OrderServiceImpl#searchOrdersFlexible"
             ],
             "routes": [
               {
                 "method": "GET",
                 "path": "/api/v1/orders/search"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/orders/search-flexible"
               }
             ]
           }
@@ -552,6 +683,22 @@
     }
   ],
   "call_graph": {
+    "CommentController#brief": [
+      {
+        "kind": "mapper",
+        "class": "CommentMapper",
+        "method": "selectBrief",
+        "is_db_write": false
+      }
+    ],
+    "CommentController#byRatings": [
+      {
+        "kind": "mapper",
+        "class": "CommentMapper",
+        "method": "listByRatings",
+        "is_db_write": false
+      }
+    ],
     "CommentController#detail": [
       {
         "kind": "mapper",
@@ -573,6 +720,14 @@
         "kind": "mapper",
         "class": "CommentMapper",
         "method": "updateContent",
+        "is_db_write": false
+      }
+    ],
+    "CommentController#withUser": [
+      {
+        "kind": "mapper",
+        "class": "CommentMapper",
+        "method": "selectWithUser",
         "is_db_write": false
       }
     ],
@@ -608,6 +763,14 @@
         "is_db_write": false
       }
     ],
+    "OrderController#searchFlexible": [
+      {
+        "kind": "component",
+        "class": "OrderServiceImpl",
+        "method": "searchOrdersFlexible",
+        "is_db_write": false
+      }
+    ],
     "OrderServiceImpl#create": [
       {
         "kind": "mapper",
@@ -631,6 +794,14 @@
       }
     ],
     "OrderServiceImpl#searchByTitle": [
+      {
+        "kind": "mapper",
+        "class": "OrderMapper",
+        "method": "selectList",
+        "is_db_write": false
+      }
+    ],
+    "OrderServiceImpl#searchOrdersFlexible": [
       {
         "kind": "mapper",
         "class": "OrderMapper",
@@ -670,6 +841,14 @@
         "is_db_write": true
       }
     ],
+    "StatsController#openidCount": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "demoOpenidCount",
+        "is_db_write": false
+      }
+    ],
     "StatsController#orderSum": [
       {
         "kind": "service",
@@ -683,6 +862,14 @@
         "kind": "service",
         "class": "StatsService",
         "method": "topWallets",
+        "is_db_write": false
+      }
+    ],
+    "StatsService#demoOpenidCount": [
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "queryForObject",
         "is_db_write": false
       }
     ],
@@ -786,6 +973,31 @@
       "file": "src\\main\\java\\com\\demo\\service\\OrderServiceImpl.java"
     },
     {
+      "owner": "OrderServiceImpl#searchOrdersFlexible",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT * FROM orders WHERE title = ? AND create_time = ? AND status = ?",
+      "tables": [
+        "orders"
+      ],
+      "columns": [
+        "orders.amount (Order.amount)",
+        "orders.create_time (Order.createTime)",
+        "orders.id (Order.id)",
+        "orders.status (Order.status)",
+        "orders.title (Order.title)",
+        "orders.user_id (Order.userId)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/orders/search-flexible"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\OrderServiceImpl.java"
+    },
+    {
       "owner": "StatsService#topWallets",
       "via": "jdbc-template",
       "kind": "SELECT",
@@ -823,6 +1035,26 @@
         {
           "method": "GET",
           "path": "/api/v1/stats/orders/sum"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    },
+    {
+      "owner": "StatsService#demoOpenidCount",
+      "via": "jdbc-template",
+      "kind": "SELECT",
+      "text": "SELECT COUNT(*) AS openid_total FROM users WHERE openid = 'demo-openid'",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.openid (User.openid)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/stats/openid/count"
         }
       ],
       "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"

@@ -30,4 +30,19 @@ public class CommentController {
         commentMapper.updateContent(id, content);
         return "ok";
     }
+
+    @GetMapping("/comments/ratings")
+    public List<Comment> byRatings(@RequestParam List<Integer> ratings) {
+        return commentMapper.listByRatings(ratings);
+    }
+
+    @GetMapping("/comments/brief/{userId}")
+    public List<Comment> brief(@PathVariable Long userId) {
+        return commentMapper.selectBrief(userId);
+    }
+
+    @GetMapping("/comments/with-user/{orderId}")
+    public List<Comment> withUser(@PathVariable Long orderId) {
+        return commentMapper.selectWithUser(orderId);
+    }
 }
