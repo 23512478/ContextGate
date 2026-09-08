@@ -4,6 +4,10 @@
 
 ## [未发布]
 
+## [v0.2.0] — 2026-09-08
+
+v0.1.0 之后经过 **4 轮、23 个真实开源项目**练兵（mall / vhr / ruoyi-vue-pro / yudao-cloud / pig / litemall / JeecgBoot / snowy / dax-pay 等），内嵌 SQL 识别从 v0.1.0 的单点规则演进为跨方法/跨类的数据流分析。
+
 ### 新增
 
 - **跨方法/跨类数据流（第四轮，收窄三条边界）**
@@ -45,6 +49,7 @@
 - 逆向索引统计按 is_mapper 类计数，`*Dao` 命名的 mapper（renren-fast）不再被漏计
 - XML 语句列清单的逗号清理会误伤 `order_id` 这类列名（`order` 前缀被误当 ORDER 关键字），补词边界
 - 类注解名改从去注释文本抽取：javadoc/注释里提及 `@Mapper`、`@param` 等，或 `@MapperScan` 含 `@Mapper` 子串，会把启动类误判成 Mapper、`@RestControllerAdvice` 异常处理器误判成 Controller（litemall/RuoYi 真实项目实测踩中）
+- README 快速开始的 MCP 配置示例把环境变量写成了 `CONTEXTGATE_PROJECT`/`CONTEXTGATE_MAP`，与 server 实际读取的 `CODECONTEXT_*` 不一致——照抄配置会被静默忽略并回退到内置 demo 地图；已更正，同步更新贡献指南排队规则清单与 demo 文件数
 
 ## [v0.1.0] — 2026-09-08
 

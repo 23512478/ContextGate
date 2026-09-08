@@ -84,8 +84,8 @@ Trae：在你的 Spring Boot 项目根目录放 `.trae/mcp.json`；Cursor：写�
       "command": "python",
       "args": ["<本仓库绝对路径>/mcp-server/mcp_server.py"],
       "env": {
-        "CONTEXTGATE_PROJECT": "<你的 Spring Boot 项目根目录>",
-        "CONTEXTGATE_MAP": "<分析产出的 framework_map.json 绝对路径>"
+        "CODECONTEXT_PROJECT": "<你的 Spring Boot 项目根目录>",
+        "CODECONTEXT_MAP": "<分析产出的 framework_map.json 绝对路径>"
       }
     }
   }
@@ -136,7 +136,7 @@ python mcp-server/test_mcp.py
 三种参与方式，按难度排序：
 
 1. **拿你的项目跑一把，报漏报**（最有价值）：`python analyzer/framework_map.py <你的项目>`，对照 `framework_map.md` 找"这条链路/这个字段明明用了却没出现"的地方，提 issue 附一小段 Java/XML 源码即可。
-2. **补解析规则**：已知排队中的规则——Wrapper 跨语句链式调用与 `.select()` 子查询、类级 SQL 常量、XML `<association>`/`<collection>`/`<foreach>`/resultMap `extends`、MyBatis Generator 的 `Example` 动态条件。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
+2. **补解析规则**：已知排队中的规则——Wrapper `.select()` 子查询列裁剪、Wrapper/条件多跳传播链与跨类直接传参（详见上文「已知边界」）。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
 3. **适配更多 AI 工具 / 语言**：MCP 是标准协议，接入新工具基本零成本；分析器目前只覆盖 Java 侧。
 
 ## License

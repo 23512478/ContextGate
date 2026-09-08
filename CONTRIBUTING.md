@@ -19,7 +19,7 @@ ContextGate 的分析器是「正则级静态分析」——不追求 100% 语�
 | `extract_sql()` | 从 @Select/@Update 等注解里抠 SQL 文本 |
 | `resolve_sql_columns()` | **列触碰解析的核心**：字面列名 + 裸 `SELECT *` + 别名星号 `o.*` 展开 |
 | `mp_builtin_sql_record()` | 给 MP 内置方法造合成 SQL 记录（全列触碰） |
-| `parse_xml_mappers()` | XML mapper 解析（resultMap / sql 片段 / include） |
+| `parse_xml_mappers()` | XML mapper 解析（resultMap 含 extends/association/collection、sql 片段 + include、foreach、懒加载子查询链接） |
 | `scan_inline_sql()` / `_wrapper_record()` | 内嵌 SQL：JdbcTemplate 裸 SQL（含局部 String 变量）、MP Wrapper 动态链（方法引用→列） |
 | `scan_methods()` | 线性扫描方法声明（**不要改回大正则**，会灾难性回溯） |
 | `reverse_index()` | 逆向索引：Mapper 方法 → 调用者 → 上游路由 |
