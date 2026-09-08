@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.entity.Order;
 import com.demo.entity.User;
 import com.demo.mapper.OrderMapper;
+import com.demo.service.OrderQuerySupport;
 import com.demo.mapper.UserMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -75,6 +76,9 @@ public class OrderServiceImpl {
         return orderMapper.selectList(w);
     }
 
+    @Autowired
+    private OrderQuerySupport orderQuerySupport;
+
     /** Wrapper 由私有 helper 构建：调用方消费（验证跨方法条件归并）。 */
     public List<Order> searchByHelper(Integer status) {
         LambdaQueryWrapper<Order> lqw = buildOrderWrapper(status);
@@ -82,9 +86,15 @@ public class OrderServiceImpl {
     }
 
     private LambdaQueryWrapper<Order> buildOrderWrapper(Integer status) {
-        LambdaQueryWrapper<Order> w = new LambdaQueryWrapper<>();
-        w.eq(Order::getStatus, status);
+        LambdaQueryWrapper<Order> w = orderQuerySupport.buildBase(status);
         w.like(Order::getTitle, "x");
         return w;
+    }
+
+    /** Wrapper 跨类传播：条件在调用方拼，消费在 OrderQuerySupport。 */
+    public List<Order> searchViaSupport(Integer status) {
+        LambdaQueryWrapper<Order> w = new LambdaQueryWrapper<>();
+        w.eq(Order::getStatus, status);
+        return orderQuerySupport.searchByWrapper(w);
     }
 }

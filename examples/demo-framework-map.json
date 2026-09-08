@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-08T06:34:00",
-    "classes": 23,
+    "generated_at": "2026-09-08T15:47:32",
+    "classes": 25,
     "controllers": 5,
     "mappers": 5,
     "entities": 5,
-    "routes": 26
+    "routes": 29
   },
   "routes": [
     {
@@ -95,6 +95,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/orders/search-support",
+      "controller": "OrderController",
+      "handler": "searchSupport"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/products",
       "controller": "ProductController",
       "handler": "list"
@@ -119,6 +125,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/stats/openid/cross",
+      "controller": "StatsController",
+      "handler": "openidCross"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/stats/openid/detail",
       "controller": "StatsController",
       "handler": "openidDetail"
@@ -140,6 +152,12 @@
       "path": "/api/v1/wallet/count",
       "controller": "WalletController",
       "handler": "countUsers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/example-support",
+      "controller": "WalletController",
+      "handler": "exampleSupport"
     },
     {
       "method": "GET",
@@ -528,6 +546,7 @@
           },
           "reverse": {
             "direct_callers": [
+              "OrderQuerySupport#searchByWrapper",
               "OrderServiceImpl#searchByAliasCopy",
               "OrderServiceImpl#searchByHelper",
               "OrderServiceImpl#searchByTitle",
@@ -554,6 +573,10 @@
               {
                 "method": "GET",
                 "path": "/api/v1/orders/search-param"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/orders/search-support"
               }
             ]
           }
@@ -737,9 +760,14 @@
           },
           "reverse": {
             "direct_callers": [
+              "OrderQuerySupport#searchByExample",
               "WalletController#searchExample"
             ],
             "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/example-support"
+              },
               {
                 "method": "GET",
                 "path": "/api/v1/wallet/search-example"
@@ -1017,6 +1045,38 @@
         "is_db_write": false
       }
     ],
+    "OrderController#searchSupport": [
+      {
+        "kind": "component",
+        "class": "OrderServiceImpl",
+        "method": "searchViaSupport",
+        "is_db_write": false
+      }
+    ],
+    "OrderQuerySupport#searchByExample": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectByExample",
+        "is_db_write": false
+      }
+    ],
+    "OrderQuerySupport#searchByWrapper": [
+      {
+        "kind": "mapper",
+        "class": "OrderMapper",
+        "method": "selectList",
+        "is_db_write": false
+      }
+    ],
+    "OrderServiceImpl#buildOrderWrapper": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "buildBase",
+        "is_db_write": false
+      }
+    ],
     "OrderServiceImpl#create": [
       {
         "kind": "mapper",
@@ -1085,6 +1145,14 @@
         "is_db_write": false
       }
     ],
+    "OrderServiceImpl#searchViaSupport": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "searchByWrapper",
+        "is_db_write": false
+      }
+    ],
     "ProductController#detail": [
       {
         "kind": "service",
@@ -1141,6 +1209,14 @@
         "is_db_write": false
       }
     ],
+    "StatsController#openidCross": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "demoOpenidCross",
+        "is_db_write": false
+      }
+    ],
     "StatsController#openidDetail": [
       {
         "kind": "service",
@@ -1170,6 +1246,14 @@
         "kind": "component",
         "class": "JdbcTemplate",
         "method": "queryForObject",
+        "is_db_write": false
+      }
+    ],
+    "StatsService#demoOpenidCross": [
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "queryForList",
         "is_db_write": false
       }
     ],
@@ -1218,6 +1302,14 @@
         "kind": "mapper",
         "class": "UserMapper",
         "method": "selectCount",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#exampleSupport": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "searchByExample",
         "is_db_write": false
       }
     ],
@@ -1291,7 +1383,7 @@
       "owner": "WalletController#searchExample",
       "via": "mp-example",
       "kind": "SELECT",
-      "text": "SELECT * FROM users WHERE nickname = ?",
+      "text": "SELECT * FROM users WHERE (nickname = ?) OR (create_time > ?)",
       "tables": [
         "users"
       ],
@@ -1580,6 +1672,28 @@
       "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
     },
     {
+      "owner": "StatsService#demoOpenidCross",
+      "via": "jdbc-template",
+      "kind": "SELECT",
+      "text": "SELECT id, nickname FROM users WHERE openid = 'demo-openid'",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.id (User.id)",
+        "users.nickname (User.nickname)",
+        "users.openid (User.openid)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/stats/openid/cross"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    },
+    {
       "owner": "ProductServiceImpl#findByIdField",
       "via": "mp-wrapper",
       "kind": "SELECT",
@@ -1597,6 +1711,55 @@
       "in_tx": false,
       "routes": [],
       "file": "src\\main\\java\\com\\demo\\service\\impl\\ProductServiceImpl.java"
+    },
+    {
+      "owner": "OrderQuerySupport#searchByWrapper",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT * FROM orders WHERE status = ? AND id = ?",
+      "tables": [
+        "orders"
+      ],
+      "columns": [
+        "orders.amount (Order.amount)",
+        "orders.create_time (Order.createTime)",
+        "orders.id (Order.id)",
+        "orders.status (Order.status)",
+        "orders.title (Order.title)",
+        "orders.user_id (Order.userId)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/orders/search-support"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\OrderQuerySupport.java"
+    },
+    {
+      "owner": "OrderQuerySupport#searchByExample",
+      "via": "mp-example",
+      "kind": "SELECT",
+      "text": "SELECT * FROM users WHERE nickname = ?",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.create_time (User.createTime)",
+        "users.id (User.id)",
+        "users.nickname (User.nickname)",
+        "users.openid (User.openid)",
+        "users.wallet_balance (User.walletBalance)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/wallet/example-support"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\OrderQuerySupport.java"
     }
   ]
 }

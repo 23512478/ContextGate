@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-08 06:34:00
-- 扫描类: 23 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 26 条 | 调用图边: 42 个方法
+- 生成时间: 2026-09-08 15:47:32
+- 扫描类: 25 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 29 条 | 调用图边: 50 个方法
 
 ---
 
@@ -64,6 +64,10 @@
 **OrderController#searchParam**
    ├─ OrderServiceImpl#searchByWrapperParam  （组件/工具）
 
+### `GET /api/v1/orders/search-support`
+**OrderController#searchSupport**
+   ├─ OrderServiceImpl#searchViaSupport  （组件/工具）
+
 ### `GET /api/v1/products`
 **ProductController#list**
    └─ ProductServiceImpl#list
@@ -87,6 +91,11 @@
    └─ StatsService#demoOpenidCount
       ├─ JdbcTemplate#queryForObject  （组件/工具）
 
+### `GET /api/v1/stats/openid/cross`
+**StatsController#openidCross**
+   └─ StatsService#demoOpenidCross
+      ├─ JdbcTemplate#queryForList  （组件/工具）
+
 ### `GET /api/v1/stats/openid/detail`
 **StatsController#openidDetail**
    └─ StatsService#demoOpenidDetail
@@ -105,6 +114,10 @@
 ### `GET /api/v1/wallet/count`
 **WalletController#countUsers**
    ├─ UserMapper#selectCount  （MP 内置）
+
+### `GET /api/v1/wallet/example-support`
+**WalletController#exampleSupport**
+   ├─ OrderQuerySupport#searchByExample  （组件/工具）
 
 ### `GET /api/v1/wallet/lambda`
 **WalletController#byLambda**
@@ -238,12 +251,13 @@ UserMapper#selectById
 
 > 改 SQL 前必查：上游有多少路由依赖它，动了会炸几个接口。
 
+- **UserMapper#selectByExample** ← 2 条路由 ⚠️
+  - 直接调用者: `OrderQuerySupport#searchByExample`, `WalletController#searchExample`
+  - `GET /api/v1/wallet/example-support`
+  - `GET /api/v1/wallet/search-example`
 - **UserMapper#selectByNicknameLambda** ← 1 条路由 
   - 直接调用者: `WalletController#byLambda`
   - `GET /api/v1/wallet/lambda`
-- **UserMapper#selectByExample** ← 1 条路由 
-  - 直接调用者: `WalletController#searchExample`
-  - `GET /api/v1/wallet/search-example`
 - **UserMapper#addBalance** ← 1 条路由 
   - 直接调用者: `WalletController#recharge`
   - `POST /api/v1/wallet/recharge`
@@ -297,7 +311,7 @@ UserMapper#selectById
   - `INSERT INTO users (openid, nickname, wallet_balance) VALUES ('demo-openid', 'demo-user', 0)`
   - 涉及表: `users`
 - **WalletController#searchExample** — @SELECT（MP Example）  (`src\main\java\com\demo\controller\WalletController.java`)
-  - `SELECT * FROM users WHERE nickname = ?`
+  - `SELECT * FROM users WHERE (nickname = ?) OR (create_time > ?)`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/wallet/search-example`
 - **UserMapper#selectByNicknameLambda** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\mapper\UserMapper.java`)
@@ -346,6 +360,18 @@ UserMapper#selectById
   - `SELECT id, nickname FROM users WHERE openid = 'demo-openid'`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/stats/openid/detail`
+- **StatsService#demoOpenidCross** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT id, nickname FROM users WHERE openid = 'demo-openid'`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/stats/openid/cross`
 - **ProductServiceImpl#findByIdField** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\impl\ProductServiceImpl.java`)
   - `SELECT * FROM product WHERE id = ?`
   - 涉及表: `product`
+- **OrderQuerySupport#searchByWrapper** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\OrderQuerySupport.java`)
+  - `SELECT * FROM orders WHERE status = ? AND id = ?`
+  - 涉及表: `orders`
+  - 上游路由: `GET /api/v1/orders/search-support`
+- **OrderQuerySupport#searchByExample** — @SELECT（MP Example）  (`src\main\java\com\demo\service\OrderQuerySupport.java`)
+  - `SELECT * FROM users WHERE nickname = ?`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/wallet/example-support`

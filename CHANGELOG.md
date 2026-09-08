@@ -6,6 +6,12 @@
 
 ### 新增
 
+- **跨方法/跨类数据流（第四轮，收窄三条边界）**
+  - 全局 helper 注册表：跨类 helper（`lqw = Other.buildXxx(...)`）与 helper 套 helper 文本递归展开（防环）；接收者按字段类型解析（`orderQuerySupport.buildBase` → `OrderQuerySupport#buildBase`）
+  - Wrapper/Example 参数传播：调用方拼的条件/语句播种给带 Wrapper 参数（含 MP 基类 `Wrapper<T>`）或带 Example 参数且有方法体的目标方法，不动点收敛；传播版落地后自动剔除同一方法的「本地降级版」记录
+  - Example criteria 分组语义：`createCriteria()` 开 AND 组、`or()` 开 OR 组（含 `example.or().andXxx()` 匿名组），多组带括号、组间按连接词连接；Example 作参数跨类传播（方法名不限，按参数类型识别）
+  - 跨类常量互拼：`SQL_A = "..." + Other.SQL_B` 全局不动点折叠（token 支持点号限定名）
+  - 回归验证：litemall Example 123/123 恢复（`example.or()` 匿名组修复）；RuoYi-Vue-Plus 真缺失 71 → 22（`Wrapper<T>` 基类参数对接）；demo 断言 7.34-7.37 全绿
 - **真实项目训练（第三轮：OneBlog / newbee-mall-cloud / renren-security / pig / yudao-cloud）**
   - 验证轮：零新增缺陷，前两轮规则全部经受住跨仓库验证——pig 5 处懒加载子查询链接正确产出；yudao-cloud（与 ruoyi-vue-pro 同源不同仓库）识别 1628 条 Wrapper 记录，helper 归并/X-Wrapper/字段值规则跨仓库一致复现
   - 残缺仅 2 个声明无实现的死代码方法（OneBlog SysLogMapper / xzs UserMapper），非分析器问题

@@ -1,5 +1,6 @@
 package com.demo.service;
 
+import com.demo.constant.SqlParts;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -45,5 +46,13 @@ public class StatsService {
     /** 常量互拼 SQL 统计。 */
     public List<Map<String, Object>> demoOpenidDetail() {
         return jdbcTemplate.queryForList(SQL_OPENID_DETAIL);
+    }
+
+    /** 跨类常量互拼：引用 SqlParts 的公共片段（验证全局常量折叠）。 */
+    private static final String SQL_OPENID_CROSS =
+            "SELECT id, nickname FROM users" + SqlParts.OPENID_WHERE;
+
+    public List<Map<String, Object>> demoOpenidCross() {
+        return jdbcTemplate.queryForList(SQL_OPENID_CROSS);
     }
 }

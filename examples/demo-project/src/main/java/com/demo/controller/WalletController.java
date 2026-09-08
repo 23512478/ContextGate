@@ -1,6 +1,7 @@
 package com.demo.controller;
 
 import com.demo.entity.User;
+import com.demo.service.OrderQuerySupport;
 import com.demo.entity.UserExample;
 import com.demo.mapper.UserMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,6 +16,9 @@ public class WalletController {
 
     @Autowired
     private UserMapper userMapper;
+
+    @Autowired
+    private OrderQuerySupport orderQuerySupport;
 
     /** 充值：自定义 @Update 写 wallet_balance。 */
     @PostMapping("/wallet/recharge")
@@ -45,6 +49,16 @@ public class WalletController {
     public List<User> searchExample(@RequestParam String nickname) {
         UserExample example = new UserExample();
         example.createCriteria().andNicknameEqualTo(nickname);
+        UserExample.Criteria recent = example.or();
+        recent.andCreateTimeGreaterThan("2026-01-01");
         return userMapper.selectByExample(example);
+    }
+
+    /** Example 跨类传播：条件在调用方拼，消费在 OrderQuerySupport。 */
+    @GetMapping("/wallet/example-support")
+    public List<User> exampleSupport(@RequestParam String nickname) {
+        UserExample ex = new UserExample();
+        ex.createCriteria().andNicknameEqualTo(nickname);
+        return orderQuerySupport.searchByExample(ex);
     }
 }

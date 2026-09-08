@@ -486,7 +486,7 @@ def _static_str_fields(body_raw):
             elif ch == "+":
                 pass  # 拼接符
             elif not ch.isspace():
-                m = re.match(r"\w+", body_raw[i:])
+                m = re.match(r"\w+(?:\.\w+)*", body_raw[i:])
                 if not m:
                     break  # 方法调用/下标等，放弃该字段
                 tokens.append(("id", m.group(0)))
@@ -563,9 +563,9 @@ _WRAPPER_DECL_RE = re.compile(
     r"(?:final\s+)?(\w+)(?:\s*<\s*(\w+)\s*>)?\s+(\w+)\s*=\s*new\s+"
     r"((?:LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)X?)"
     r"\s*(?:<\s*(\w+)?\s*>)?\s*\(")
-# 方法签名里的 Wrapper 参数：LambdaQueryWrapper<Order> w（参数当已定义变量）
+# 方法签名里的 Wrapper 参数：LambdaQueryWrapper<Order> w / Wrapper<Order> w（MP 基类常见）
 _WRAPPER_PARAM_RE = re.compile(
-    r"\b((?:LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper)X?)"
+    r"\b((?:LambdaQueryWrapper|LambdaUpdateWrapper|QueryWrapper|UpdateWrapper|Wrapper)X?)"
     r"\s*<\s*(\w+)\s*>\s+(\w+)")
 
 
@@ -600,25 +600,32 @@ def _split_statements(body):
     return stmts
 
 
-def _wrapper_defuse(owner, body, params, cls, helper_chains, ent_by_simple, table_to_entity):
+def _wrapper_defuse(owner, body, params, cls, helper_chains, global_helpers,
+                    wrapper_params, ent_by_simple, table_to_entity, seeds=None):
     """Wrapper 拆成变量跨语句链式调用的 def-use 重建：
       定义   XxxWrapper<Entity> w = new XxxWrapper<>()（实体：构造泛型 > 声明泛型）
-      参数   方法签名带 XxxWrapper<Entity> w —— 参数当已定义变量（调用方在
-             方法外拼的链不跨方法追，合成 SQL 只含方法内条件）
-      helper lqw = buildXxx(...) —— 调用本类返回 Wrapper 的方法，helper 方法体
-             里的条件链文本归并进消费点的 region
+      参数   方法签名带 XxxWrapper<Entity> w —— 参数当已定义变量；调用方拼好的
+             条件经 seeds 播种进参数链（跨类/跨方法传播由 scan_inline_sql 驱动）
+      helper lqw = buildXxx(...) / lqw = Other.buildXxx(...) —— 本类或跨类返回
+             Wrapper 的方法，helper 方法体（已展开嵌套 helper）的条件链归并进消费点
       续链   w.like(...) / w = w.eq(...)（if/for 分支内续链保守计入，宁多报不漏报）
       拷贝   w2 = w → 同一底层对象，链表共享
-      消费   orderMapper.selectList(w) 等——把该变量攒下的全部链文本拼成 region
-    交给 _wrapper_record 合成 SQL；消费后链重置（变量可复用）。
-    只支持同类内直链：跨类传递、helper 再调 helper 不追。"""
-    ent, chains, recs = {}, {}, []
+      消费   orderMapper.selectList(w) 等——接收者是本类字段/this 时记为消费；
+             若目标方法本身带 Wrapper 参数且有方法体，则转为传播：调用方链文本
+             播种给目标方法，由 scan_inline_sql 的不动点轮处理
+    返回 (records, pending_props)，pending_props 元素为 (目标类, 目标方法, 链文本)。"""
+    ent, chains, recs, props = {}, {}, [], []
     # 消费点合法接收者：本类声明的字段 + ServiceImpl 继承的 baseMapper
     field_names = set(cls.get("fields") or {}) | {"baseMapper"}
-    # Wrapper 参数当已定义变量
+    cls_name = cls["name"]
+    # Wrapper 参数当已定义变量；传播种子拼在参数链最前
+    seeds = seeds or {}
+    param_vars = set()
     for pm in _WRAPPER_PARAM_RE.finditer(params or ""):
-        ent[pm.group(3)] = (pm.group(1), pm.group(2))
-        chains[pm.group(3)] = []
+        param_vars.add(pm.group(3))
+        var = pm.group(3)
+        ent[var] = (pm.group(1), pm.group(2))
+        chains[var] = list(seeds.get(var, []))
     for raw_stmt in _split_statements(body):
         stmt = raw_stmt.strip()
         if not stmt:
@@ -632,10 +639,20 @@ def _wrapper_defuse(owner, body, params, cls, helper_chains, ent_by_simple, tabl
                 ent[var] = (wtype, entity)
                 chains[var] = [stmt]
                 continue
-        # helper 返回值赋给变量：lqw = buildXxx(...) / this.buildXxx(...)
-        hm2 = re.search(r"(\w+)\s*=\s*(?:this\s*\.\s*)?(\w+)\s*\(", stmt)
-        if hm2 and hm2.group(1) not in ent and hm2.group(2) in helper_chains:
-            wtype, entity, helper_text = helper_chains[hm2.group(2)]
+        # helper 返回值赋给变量：lqw = buildXxx(...) / lqw = Other.buildXxx(...)
+        hm2 = re.search(r"(\w+)\s*=\s*(?:(\w+)\s*\.\s*)?(?:this\s*\.\s*)?(\w+)\s*\(", stmt)
+        helper = None
+        if hm2:
+            recv2, name2 = hm2.group(2), hm2.group(3)
+            if not recv2 and name2 in helper_chains:
+                helper = helper_chains[name2]
+            elif recv2:
+                # 接收者是字段名：解析成类型名再查全局 helper（orderQuerySupport -> OrderQuerySupport）
+                recv_cls = cls["fields"].get(recv2) or recv2
+                if (recv_cls, name2) in global_helpers:
+                    helper = global_helpers[(recv_cls, name2)]
+        if hm2 and helper and hm2.group(1) not in ent:
+            wtype, entity, helper_text = helper
             ent[hm2.group(1)] = (wtype, entity)
             chains[hm2.group(1)] = [helper_text]
             continue
@@ -654,9 +671,22 @@ def _wrapper_defuse(owner, body, params, cls, helper_chains, ent_by_simple, tabl
                 # 续链 / 重新赋值续链
                 chains[var].append(stmt)
                 continue
+            # 先看是否传播：语句里的调用点，目标方法带 Wrapper 参数且有方法体
+            # （无方法体的接口方法仍走下面的消费语义，如 RuoYi-Vue-Plus 的 XML-backed 方法）
+            prop_target = None
+            for cm2 in re.finditer(r"\b(?:(\w+)\s*\.\s*)?(\w+)\s*\(", stmt):
+                recv2, name2 = cm2.group(1), cm2.group(2)
+                tcls = cls_name if recv2 in (None, "this") else (cls["fields"].get(recv2) or recv2)
+                if (tcls, name2) in wrapper_params:
+                    prop_target = (tcls, name2)
+                    break
+            if prop_target:
+                tc, tm = prop_target
+                props.append((tc, tm, ";\n".join(chains[var])))
+                chains[var] = []  # 传播后链重置
+                continue
             # 消费点：变量作为参数传给 mapper/service 方法。接收者须是本类字段
-            # 或 this/baseMapper（ServiceImpl 继承字段）——方法名不必是标准动词，
-            # RuoYi-Vue-Plus 这类项目大量自定义 selectDeptList(wrapper) 方法
+            # 或 this/baseMapper（ServiceImpl 继承字段）——方法名不必是标准动词
             cons = re.search(rf"\b(\w+)\s*\.\s*\w+\s*\(((?:[^()]|\([^()]*\))*)\)", stmt)
             if cons and (cons.group(1) in field_names or cons.group(1) == "this") \
                     and re.search(rf"\b{re.escape(var)}\b", cons.group(2)):
@@ -664,6 +694,10 @@ def _wrapper_defuse(owner, body, params, cls, helper_chains, ent_by_simple, tabl
                 rec = _wrapper_record(owner, region, wtype, entity,
                                       ent_by_simple, table_to_entity)
                 if rec:
+                    if var in param_vars:
+                        # 参数变量的本地消费是"没有调用方信息"的降级版：
+                        # 传播落地后由 scan_inline_sql 剔除，避免同方法重复两条
+                        rec["_param_var"] = True
                     recs.append(rec)
                 chains[var] = []  # 消费后链重置，变量可复用
         # helper 结果直接作为参数传给 mapper/service（不落变量）：
@@ -678,7 +712,7 @@ def _wrapper_defuse(owner, body, params, cls, helper_chains, ent_by_simple, tabl
                                       wtype, entity, ent_by_simple, table_to_entity)
                 if rec:
                     recs.append(rec)
-    return recs
+    return recs, props
 
 
 # ---------------------------------------------------------------- MBG Example 动态条件
@@ -704,41 +738,91 @@ _EXAMPLE_CONSUME = {"selectbyexample": ("SELECT", True), "countbyexample": ("SEL
                     "updatebyexampleselective": ("UPDATE", True)}
 
 
-def _example_defuse(owner, body, ent_by_simple, table_to_entity):
+def _example_defuse(owner, body, ent_by_simple, table_to_entity, seed_text="", params=""):
     """MyBatis Generator 的 Example 动态条件：
     new XxxExample → createCriteria().andXxxEqualTo(...) → selectByExample(example)。
-    AND/OR 按出现顺序平铺（MBG 的 criteria 分组语义不还原，宁近似不漏报）；
-    Example 作方法参数传入的（调用方在别处拼条件）不追。"""
-    ent_m = re.search(r"\b(\w+)Example\s+(\w+)\s*=\s*new\s+\w+Example\b", body)
+    criteria 分组语义：createCriteria() 开 AND 组、or() 开 OR 组，组内条件 AND 连接，
+    组间按组连接词（多组时每组加括号）。seed_text 为跨方法传播的调用方语句
+    （Example 作方法参数传入时，调用方拼的条件由此归并）。"""
+    full = f"{seed_text}\n{body}" if seed_text else body
+    ent_m = re.search(r"\b(\w+)Example\s+(\w+)\s*=\s*new\s+\w+Example\b", full)
     if not ent_m:
         return []
     ent = ent_by_simple.get(ent_m.group(1))
     if not ent or not ent.get("entity_columns"):
         return []
     ecols, table = ent["entity_columns"], ent["table_name"]
+    ent_name = ent["name"]
     example_vars = {m.group(2) for m in
-                    re.finditer(r"\b(\w+)Example\s+(\w+)\s*=\s*new\s+\w+Example\b", body)}
+                    re.finditer(r"\b(\w+)Example\s+(\w+)\s*=\s*new\s+\w+Example\b", full)}
+    em0 = re.search(r"\b(\w+)Example\s+(\w+)", params or "")
+    if em0:
+        example_vars.add(em0.group(2))  # 当前方法的 Example 参数也是合法消费变量
 
-    conds = []
-    for cm in _EXAMPLE_CRITERIA_RE.finditer(body):
-        field = cm.group(2)[0].lower() + cm.group(2)[1:]
-        col = ecols.get(field)
-        if not col:
-            continue  # 不是本实体列（其他类的 and 方法等），不收
-        conds.append((cm.group(1).upper(), col, _EXAMPLE_OP_SQL[cm.group(3)]))
+    def conds_in(text):
+        out_conds = []
+        for cm in _EXAMPLE_CRITERIA_RE.finditer(text):
+            field = cm.group(2)[0].lower() + cm.group(2)[1:]
+            col = ecols.get(field)
+            if not col:
+                continue  # 不是本实体列（其他类的 and 方法等），不收
+            out_conds.append(f"{col} {_EXAMPLE_OP_SQL[cm.group(3)]} ?")
+        return out_conds
+
+    # criteria 分组：变量 → 组；createCriteria 开 AND 组、or() 开 OR 组
+    groups = []          # [{"conj": "AND"/"OR", "conds": [...]}]
+    crit_var = {}        # criteria 变量名 -> 组下标
+    for raw_stmt in _split_statements(full):
+        stmt = raw_stmt.strip()
+        if not stmt:
+            continue
+        cm = re.search(r"\b(?:[\w.]+(?:\s*<[^<>]*>)?\s+)?(\w+)\s*=\s*(\w+)\.(createCriteria|or)\s*\(", stmt)
+        if cm and cm.group(2) in example_vars:
+            gi = len(groups)
+            groups.append({"conj": "AND" if cm.group(3) == "createCriteria" else "OR",
+                           "conds": conds_in(stmt)})
+            crit_var[cm.group(1)] = gi
+            continue
+        # example.or(criteriaVar) / and(criteriaVar)：调整被合并组的组间连接词
+        om = re.search(r"\b(\w+)\.(or|and)\s*\(\s*(\w+)\s*\)", stmt)
+        if om and om.group(1) in example_vars and om.group(3) in crit_var:
+            if om.group(2) == "or":
+                groups[crit_var[om.group(3)]]["conj"] = "OR"
+            continue
+        # 无变量链式：ex.createCriteria().andXxx(...) / ex.or().andXxx(...) 直接开隐式组
+        # （litemall 的 MBG 风格：or() 开 OR 组、createCriteria 开 AND 组，条件同语句链上）
+        am2 = re.search(r"\b(\w+)\.(createCriteria|or)\s*\(\s*\)", stmt)
+        if am2:
+            groups.append({"conj": "AND" if am2.group(2) == "createCriteria" else "OR",
+                           "conds": conds_in(stmt)})
+            continue
+        # 挂到语句中出现的 criteria 变量所在组
+        for cv, gi in crit_var.items():
+            if re.search(rf"\b{re.escape(cv)}\s*\.", stmt):
+                groups[gi]["conds"].extend(conds_in(stmt))
+
+    conds = [c for g in groups for c in g["conds"]]
     if not conds:
         return []
-    where_parts = []
-    for i, (conj, col, op) in enumerate(conds):
-        kw = "" if i == 0 else conj
-        where_parts.append((kw + " " if kw else "") + f"{col} {op} ?")
-    where_clause = " ".join(where_parts)
-    cond_cols = [c for _c, c, _o in conds]
+    seg_list = []
+    multi = sum(1 for g in groups if g["conds"]) > 1
+    for g in groups:
+        if not g["conds"]:
+            continue
+        seg = " AND ".join(g["conds"])
+        if seg_list:
+            seg = f"{g['conj']} ({seg})" if multi else f"{g['conj']} {seg}"
+        elif multi:
+            seg = f"({seg})"
+        seg_list.append(seg)
+    where_clause = " ".join(seg_list)
+    cond_cols = list(dict.fromkeys(
+        c.split(" ")[0] for c in conds))
 
     recs = []
     for xm in re.finditer(
             r"\.\s*(\w+)\s*\(([^;{}]{0,200})", body):
-        kind, full_cols = _EXAMPLE_CONSUME.get(xm.group(1).lower(), (None, None))
+        kind = _EXAMPLE_CONSUME.get(xm.group(1).lower(), (None, None))[0]
         if not kind:
             continue
         if not any(re.search(r"\b" + re.escape(v) + r"\b", xm.group(2)) for v in example_vars):
@@ -749,23 +833,24 @@ def _example_defuse(owner, body, ent_by_simple, table_to_entity):
                 cols = cond_cols  # COUNT 只依赖 WHERE 里的列
             else:
                 text = f"SELECT * FROM {table} WHERE {where_clause}"
-                cols = [f"{table}.{c} ({ent['name']}.{f})"
+                cols = [f"{table}.{c} ({ent_name}.{f})"
                         for f, c in ecols.items()]  # 行读取，全列
         elif kind == "DELETE":
             text = f"DELETE FROM {table} WHERE {where_clause}"
             cols = cond_cols
         else:
             text = f"UPDATE {table} SET ? WHERE {where_clause}"
-            cols = [f"{table}.{c} ({ent['name']}.{f})" for f, c in ecols.items()]
+            cols = [f"{table}.{c} ({ent_name}.{f})" for f, c in ecols.items()]
         recs.append({"owner": owner, "via": "mp-example", "kind": kind, "text": text,
                      "tables": [table], "columns": sorted(set(cols))})
     return recs
 
 
 def scan_inline_sql(classes, by_simple, table_to_entity):
-    """扫所有方法体里的两类「不走 Mapper 接口」的 SQL：
+    """扫所有方法体里的「不走 Mapper 接口」的 SQL：
       1. JdbcTemplate 裸 SQL：jdbcTemplate.update("INSERT ...") / queryForList("SELECT ...")
       2. MP Wrapper 动态链：new LambdaQueryWrapper<User>().eq(User::getName, ...) / lambdaQuery()...
+         含跨方法/跨类传播：调用方拼的链播种给带 Wrapper 参数的方法（不动点）
     返回记录列表，字段：owner / via / kind / text / tables / columns。
     in_tx / routes 由主流程补。"""
     out = []
@@ -777,14 +862,64 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
         if sm:
             service_entity[c["name"]] = sm.group(2)
 
+    # ---- 预扫：全局 helper 注册表 + 带 Wrapper/Example 参数的方法索引 ----
+    # 只登记「有方法体」的目标：抽象接口方法（XML-backed）保持消费语义不传播
+    raw_helpers = {}     # (类名, 方法名) -> (wtype, entity, 方法体)
+    wrapper_params = {}  # (类名, 方法名) -> (参数变量名, wtype, entity)
+    example_params = {}  # (类名, 方法名) -> 参数变量名
     for c in classes.values():
-        # 本类返回类型为 Wrapper 的方法（条件构建 helper）：其方法体是链文本，
-        # 调用方 `lqw = buildXxx(...)` 的消费点要把这段条件归并进合成 SQL
-        helper_chains = {}
         for meth in c["methods"]:
             wm = re.match(r"(\w*Wrapper)\s*<\s*(\w+)\s*>\s*$", meth.get("ret_type") or "")
             if wm and meth.get("body_raw"):
-                helper_chains[meth["name"]] = (wm.group(1), wm.group(2), meth["body_raw"])
+                raw_helpers[(c["name"], meth["name"])] = (wm.group(1), wm.group(2), meth["body_raw"])
+            pm = _WRAPPER_PARAM_RE.search(meth.get("params") or "")
+            if pm and meth.get("body_raw"):
+                wrapper_params[(c["name"], meth["name"])] = (pm.group(3), pm.group(1), pm.group(2))
+            em = re.search(r"\b(\w+Example)\s+(\w+)", meth.get("params") or "")
+            if em and meth.get("body_raw"):
+                example_params[(c["name"], meth["name"])] = em.group(2)
+
+    # helper 展开：方法体里调用的其他 helper（同类或跨类 Other.buildXxx）文本递归拼接
+    expanded = {}
+
+    def expand_helper(cls_name, meth_name, seen):
+        key = (cls_name, meth_name)
+        if key in expanded:
+            return expanded[key][2]  # 缓存的是三元组，拼接只需文本
+        if key in seen:
+            return ""  # 循环调用防护
+        wtype, entity, hbody = raw_helpers[key]
+        fields = by_simple[cls_name]["fields"]
+        parts = []
+        for st in _split_statements(hbody):
+            parts.append(st)
+            for m2 in re.finditer(r"\b(?:(\w+)\s*\.\s*)?(\w+)\s*\(", st):
+                recv2, cand = m2.group(1), m2.group(2)
+                if cand == meth_name:
+                    continue
+                tgt = None
+                if not recv2 and (cls_name, cand) in raw_helpers:
+                    tgt = (cls_name, cand)
+                elif recv2:
+                    # 接收者是字段名：先解析成类型名再查（orderQuerySupport -> OrderQuerySupport）
+                    recv_cls = fields.get(recv2) or recv2
+                    if (recv_cls, cand) in raw_helpers:
+                        tgt = (recv_cls, cand)
+                if tgt and tgt not in seen:
+                    parts.append(expand_helper(tgt[0], tgt[1], seen | {key}))
+        text = ";\n".join(parts)
+        expanded[key] = (wtype, entity, text)
+        return text
+
+    for key in raw_helpers:
+        expand_helper(key[0], key[1], frozenset())
+
+    pending_props = []       # (目标类, 目标方法, 链文本)  Wrapper 参数传播
+    pending_example = []     # (目标类, 目标方法, 调用方语句文本)  Example 参数传播
+
+    for c in classes.values():
+        # 本类 helper 索引（跨类用限定名 Other.buildXxx 查 expanded）
+        helper_chains = {name: h for (cn, name), h in expanded.items() if cn == c["name"]}
 
         for meth in c["methods"]:
             body = meth.get("body_raw") or ""
@@ -867,11 +1002,33 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                     if rec:
                         out.append(rec)
             # 2c) 跨语句 def-use：Wrapper 拆成变量/方法参数/helper 返回值，定义/续链/消费分离的写法
-            out.extend(_wrapper_defuse(owner, body, meth.get("params"),
-                                       c, helper_chains, ent_by_simple, table_to_entity))
+            recs2, props2 = _wrapper_defuse(owner, body, meth.get("params"), c,
+                                            helper_chains, expanded, wrapper_params,
+                                            ent_by_simple, table_to_entity)
+            out.extend(recs2)
+            pending_props.extend(props2)
 
             # ---- 3) MBG Example 动态条件 ----
-            out.extend(_example_defuse(owner, body, ent_by_simple, table_to_entity))
+            out.extend(_example_defuse(owner, body, ent_by_simple, table_to_entity,
+                                       params=meth.get("params")))
+            # 3b) Example 作参数传给其他方法：按变量类型识别（方法名不限），
+            #     目标方法须带 Example 参数且有方法体
+            ex_var_types = {m.group(2): m.group(1) for m in
+                            re.finditer(r"\b(\w+Example)\s+(\w+)\s*=\s*new\s+\w+Example\b", body)}
+            em3 = re.search(r"\b(\w+Example)\s+(\w+)", meth.get("params") or "")
+            if em3:
+                ex_var_types[em3.group(2)] = em3.group(1)
+            if ex_var_types:
+                for cm3 in re.finditer(r"\b(?:(\w+)\s*\.\s*)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)", body):
+                    recv3, name3, args3 = cm3.group(1), cm3.group(2), cm3.group(3)
+                    for v3, t3 in ex_var_types.items():
+                        if not re.search(rf"\b{re.escape(v3)}\b", args3):
+                            continue
+                        recv_cls3 = (c["fields"].get(recv3) or recv3) if recv3 else c["name"]
+                        if (recv_cls3, name3) in example_params:
+                            seed_text = _example_seed_statements(body, v3)
+                            if seed_text.strip():
+                                pending_example.append((recv_cls3, name3, seed_text))
 
             # ---- 4) 泛型实体上的字段值便捷调用 ----
             # (a) Mapper 接口：selectOne(Entity::getField, value)（支持多字段对，yudao 风格）
@@ -921,7 +1078,78 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                             cols4 = sorted(marker(f) for f in ecols)
                         out.append({"owner": owner, "via": "mp-wrapper", "kind": kind4,
                                     "text": text4, "tables": [tbl], "columns": cols4})
+
+    # ---- 传播轮（不动点）：调用方拼的链/条件播种给带 Wrapper/Example 参数的方法 ----
+    pre_prop = len(out)
+    seeded_owners = set()
+    seen_props = set()
+    queue = pending_props
+    while queue:
+        nxt = []
+        for tc, tm, seed in queue:
+            key = (tc, tm, seed)
+            if key in seen_props:
+                continue
+            seen_props.add(key)
+            tcls = by_simple.get(tc)
+            if not tcls:
+                continue
+            meth = next((m for m in tcls["methods"] if m["name"] == tm), None)
+            if not meth or not meth.get("body_raw"):
+                continue
+            helper_chains_t = {name: h for (cn, name), h in expanded.items() if cn == tc}
+            pv, wtype, entity = wrapper_params[(tc, tm)]
+            recs2, props2 = _wrapper_defuse(
+                f"{tc}#{tm}", meth["body_raw"], meth.get("params"), tcls,
+                helper_chains_t, expanded, wrapper_params, ent_by_simple, table_to_entity,
+                seeds={pv: [seed]})
+            for r in recs2:
+                seeded_owners.add(r["owner"])
+            out.extend(recs2)
+            nxt.extend(props2)
+        queue = nxt
+    if seeded_owners:
+        # 传播版落地后，剔除同方法的"本地降级版"（只有方法内条件的记录）
+        out = [r for r in out[:pre_prop] if not (r.get("_param_var") and r["owner"] in seeded_owners)] \
+              + [r for r in out[pre_prop:]]
+    for r in out:
+        r.pop("_param_var", None)
+
+    seen_ex = set()
+    queue = pending_example
+    while queue:
+        nxt = []
+        for tc, tm, seed in queue:
+            key = (tc, tm, seed)
+            if key in seen_ex:
+                continue
+            seen_ex.add(key)
+            tcls = by_simple.get(tc)
+            if not tcls:
+                continue
+            meth = next((m for m in tcls["methods"] if m["name"] == tm), None)
+            if not meth or not meth.get("body_raw"):
+                continue
+            out.extend(_example_defuse(f"{tc}#{tm}", meth["body_raw"],
+                                       ent_by_simple, table_to_entity, seed_text=seed,
+                                       params=meth.get("params")))
+        queue = nxt
     return out
+
+
+def _example_seed_statements(body, ex_var):
+    """收集方法体里与 Example 变量相关的语句（定义、criteria 派生、条件调用、消费），
+    作为传播种子拼给目标方法的 Example 参数。criteria 变量随赋值关系闭包扩张。"""
+    stmts = _split_statements(body)
+    keep = []
+    crit_vars = {ex_var}
+    for st in stmts:
+        if any(re.search(rf"\b{re.escape(v)}\b", st) for v in crit_vars):
+            keep.append(st.strip())
+            nm = re.search(rf"\b(?:\w+)\s+(\w+)\s*=\s*{re.escape(ex_var)}\.(?:createCriteria|or)\s*\(", st)
+            if nm:
+                crit_vars.add(nm.group(1))
+    return "\n".join(keep)
 
 
 def _wrapper_record(owner, region, wtype, ent_name, ent_by_simple, table_to_entity):
@@ -1236,6 +1464,8 @@ def parse_java(path):
                 static_strs[name] = _join_sql_literal(" ".join(parts))
                 del pending[name]
                 progress = True
+    # 本轮没折出来的（引用了别的类的常量）留给 main 的全局不动点轮
+    static_pending = list(pending.items())
 
     # 实体信息：@TableName + 字段 -> 列名（MP 驼峰转下划线，@TableField 显式覆盖）
     table_name = None
@@ -1323,6 +1553,7 @@ def parse_java(path):
         "implements": implements,
         "fields": fields,
         "static_strs": static_strs,
+        "static_pending": static_pending,
         "methods": methods,
         "class_ann": class_ann,
         "file": path,
@@ -1530,6 +1761,41 @@ def main():
         if info:
             classes[info["fqn"]] = info
             by_simple[info["name"]] = info
+
+    # 跨类常量互拼折叠：SQL_A = "..." + Other.SQL_B（全局不动点，按 import 简单名查）
+    progress = True
+    while progress:
+        progress = False
+        for c in classes.values():
+            pend = c.get("static_pending")
+            if not pend:
+                continue
+            still = []
+            for name, tokens in pend:
+                parts, ok = [], True
+                for kind_, val in tokens:
+                    if kind_ == "lit":
+                        parts.append(val)
+                    elif val in c["static_strs"]:
+                        parts.append(c["static_strs"][val])
+                    elif "." in val:
+                        ocls, ofield = val.rsplit(".", 1)
+                        other = by_simple.get(ocls)
+                        t2 = (other or {}).get("static_strs", {}).get(ofield)
+                        if t2:
+                            parts.append(t2)
+                        else:
+                            ok = False
+                            break
+                    else:
+                        ok = False
+                        break
+                if ok:
+                    c["static_strs"][name] = _join_sql_literal(" ".join(parts))
+                    progress = True
+                else:
+                    still.append((name, tokens))
+            c["static_pending"] = still
 
     # 接口简单名 -> 实现类
     impl_of = {}

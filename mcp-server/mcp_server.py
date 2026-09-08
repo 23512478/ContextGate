@@ -117,6 +117,14 @@ def find_routes(query: str):
     if len(parts) == 2 and parts[0].upper() in HTTP_VERBS:
         verb, q = parts[0].upper(), parts[1].strip()
     hits = []
+    # 精确路径优先：查询串与路由路径全等（可按尾斜杠/大小写差异容忍）直接命中，
+    # 避免「/orders/search」被子串匹配拖进 /search-alias 等一族的歧义列表
+    exact = [r for r in data()["routes"]
+             if (verb or "ANY") and q and r["path"].strip("/") == q.strip("/")]
+    if verb:
+        exact = [r for r in exact if r["method"] in (verb, "ANY")]
+    if exact:
+        return exact
     for r in data()["routes"]:
         if q and q not in r["path"]:
             continue

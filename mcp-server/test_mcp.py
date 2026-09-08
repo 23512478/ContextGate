@@ -333,6 +333,32 @@ def main():
         assert "ProductMapper#selectById" in out_svc, \
             "ServiceImpl 继承方法 getById() 应映射到泛型 M 的 selectById 内置方法"
 
+        # 7.34 跨类 helper + 套 helper：buildOrderWrapper 调 OrderQuerySupport.buildBase
+        #      （跨类，且 buildOrderWrapper 自身也是 helper=套娃）
+        out_helper2 = call_tool(proc, "find_sql", {"query": "searchByHelper"})
+        assert "status = ?" in out_helper2 and "title = ?" in out_helper2, \
+            "跨类 helper（buildBase）的条件应连同本类 helper 的条件一起归并"
+
+        # 7.35 Wrapper 跨类传播：条件在调用方拼、消费在目标类
+        out_prop = call_tool(proc, "find_sql", {"query": "searchByWrapper"})
+        assert out_prop.count("SELECT * FROM orders WHERE status = ? AND id = ?") == 1, \
+            "跨类传播后应恰好一条完整记录（调用方 status + 目标方法内 id），本地降级版被剔除"
+        assert "WHERE id = ?" not in out_prop.replace("status = ? AND id = ?", ""), \
+            "不应再有缺失调用方条件的降级版"
+
+        # 7.36 Example 参数跨类传播 + ⑤ criteria 分组语义
+        out_exprop = call_tool(proc, "find_sql", {"query": "searchByExample"})
+        assert "SELECT * FROM users WHERE nickname = ?" in out_exprop, \
+            "Example 参数传播：调用方拼的 andNicknameEqualTo 应出现在目标方法的合成 SQL"
+        out_exgrp = call_tool(proc, "find_sql", {"query": "searchExample"})
+        assert "(nickname = ?) OR (create_time > ?)" in out_exgrp, \
+            "criteria 分组：AND 组/or() 组应带括号、OR 连接（旧版是平铺无括号）"
+
+        # 7.37 跨类常量互拼：SQL_OPENID_CROSS 引用 SqlParts.OPENID_WHERE
+        out_const_cross = call_tool(proc, "find_sql", {"query": "demoOpenidCross"})
+        assert "SELECT id, nickname FROM users WHERE openid = 'demo-openid'" in out_const_cross, \
+            "引用其他类常量（SqlParts.OPENID_WHERE）应全局折叠出完整 SQL"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

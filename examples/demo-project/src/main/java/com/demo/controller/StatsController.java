@@ -32,6 +32,11 @@ public class StatsController {
         return statsService.demoOpenidCount();
     }
 
+    @GetMapping("/stats/openid/cross")
+    public List<Map<String, Object>> openidCross() {
+        return statsService.demoOpenidCross();
+    }
+
     @GetMapping("/stats/openid/detail")
     public List<Map<String, Object>> openidDetail() {
         return statsService.demoOpenidDetail();

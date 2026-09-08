@@ -125,9 +125,9 @@ python mcp-server/test_mcp.py
 
 - **正则级解析，不是真 Java AST**：复杂语法（内部类、Lombok 生成方法等）可能漏，遇到再补规则
 - **MyBatis-Plus 内置方法：行读取标全列、count 族标 0 列**——`selectById`/`selectList` 底层就是取整行，标"触碰全部列"是语义事实而非近似；`selectCount`/`count`/`exists`/`countByExample` 是 COUNT，不触碰业务列
-- **Wrapper 跨语句只支持同类内直链**：定义/续链/消费点分离、分支内续链、拷贝别名（`w2 = w`）、Wrapper 作方法参数、本类 helper 方法构建（`lqw = buildXxx(...)`，条件归并到消费点）都可解析；跨类传递、helper 套 helper、调用方在方法外拼的条件不追
-- **SQL 常量支持字面量拼接、同类常量互拼折叠与跨类单常量引用**；运行期拼参（`"..." + variable`）、跨类常量互拼静态拿不到
-- **MBG `Example` 动态条件（v1）**：条件方法与消费方法可合成 WHERE；AND/OR 按出现顺序平铺（criteria 分组语义不还原），Example 作方法参数传入不追
+- **Wrapper 跨语句/跨方法/跨类**：定义/续链/消费点分离、分支内续链、拷贝别名（`w2 = w`）、Wrapper 作方法参数、本类/跨类 helper 构建（`lqw = buildXxx(...)` / `lqw = Other.buildXxx(...)`，含 helper 套 helper）、调用方条件经传播归并（条件在调用方拼、消费在带 Wrapper 参数的方法，不动点收敛）都可解析；多跳传播链、跨类直接传参仍不追
+- **SQL 常量支持字面量拼接、同类互拼折叠与跨类互拼**（`SQL_A = "..." + Other.SQL_B`，全局不动点折叠）；运行期拼参（`"..." + variable`）静态拿不到
+- **MBG `Example` 动态条件**：criteria 分组语义已还原——`createCriteria()` 开 AND 组、`or()` 开 OR 组（含 `example.or().andXxx()` 匿名组），多组时带括号、组间按连接词连接；Example 作方法参数传入时调用方条件经传播归并（方法名不限，按 Example 参数类型识别）
 
 ## 参与进来
 
