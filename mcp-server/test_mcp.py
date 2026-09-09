@@ -359,6 +359,26 @@ def main():
         assert "SELECT id, nickname FROM users WHERE openid = 'demo-openid'" in out_const_cross, \
             "引用其他类常量（SqlParts.OPENID_WHERE）应全局折叠出完整 SQL"
 
+        # 7.38 Example 参数多跳传播：Controller 拼 nickname → 中转层拼 create_time → 终点消费
+        out_relay = call_tool(proc, "find_sql", {"query": "searchByRelay"})
+        assert "(nickname = ?) AND (create_time > ?)" in out_relay, \
+            "Example 多跳：终点合成 SQL 应同时含 Controller（两跳前）和中转层的条件"
+        assert out_relay.count("SELECT * FROM users WHERE") == 1, \
+            "Example 多跳：终点应恰好一条完整记录（互传/自环不应产生重复落地）"
+
+        # 7.39 链式返回值接收者：orderQuerySupport.getSelf().listUsersDirect()
+        out_chain = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/chain-call"})
+        assert "listUsersDirect" in out_chain and "selectById" in out_chain, \
+            "链式调用：中间 getter 的返回类型可解析，尾方法应接入调用链直到 Mapper 内置方法"
+
+        # 7.40 方法内 new 局部对象 / var 关键字：类型不在注入字段表里也应断链重连
+        out_local = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/local-new"})
+        assert "listUsersDirect" in out_local and "selectById" in out_local, \
+            "局部 new 的对象：局部变量类型表应把断掉的链接回 Mapper"
+        out_var = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/local-var"})
+        assert "selectById" in out_var, \
+            "var v = new T()：类型应从 new 右值取"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

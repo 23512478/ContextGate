@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-08T16:03:43",
+    "generated_at": "2026-09-09T22:46:59",
     "classes": 25,
     "controllers": 5,
     "mappers": 5,
     "entities": 5,
-    "routes": 29
+    "routes": 33
   },
   "routes": [
     {
@@ -149,9 +149,21 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/wallet/chain-call",
+      "controller": "WalletController",
+      "handler": "chainCall"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/wallet/count",
       "controller": "WalletController",
       "handler": "countUsers"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/example-relay",
+      "controller": "WalletController",
+      "handler": "exampleRelay"
     },
     {
       "method": "GET",
@@ -164,6 +176,18 @@
       "path": "/api/v1/wallet/lambda",
       "controller": "WalletController",
       "handler": "byLambda"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/local-new",
+      "controller": "WalletController",
+      "handler": "localNew"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/local-var",
+      "controller": "WalletController",
+      "handler": "localVar"
     },
     {
       "method": "GET",
@@ -761,9 +785,14 @@
           "reverse": {
             "direct_callers": [
               "OrderQuerySupport#searchByExample",
+              "StatsService#searchByRelay",
               "WalletController#searchExample"
             ],
             "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/example-relay"
+              },
               {
                 "method": "GET",
                 "path": "/api/v1/wallet/example-support"
@@ -823,6 +852,7 @@
           },
           "reverse": {
             "direct_callers": [
+              "OrderQuerySupport#listUsersDirect",
               "OrderServiceImpl#create",
               "WalletController#me"
             ],
@@ -830,6 +860,18 @@
               {
                 "method": "POST",
                 "path": "/api/v1/orders"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/chain-call"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/local-new"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/local-var"
               },
               {
                 "method": "GET",
@@ -1053,6 +1095,22 @@
         "is_db_write": false
       }
     ],
+    "OrderQuerySupport#listUsersDirect": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectById",
+        "is_db_write": false
+      }
+    ],
+    "OrderQuerySupport#relayUserExample": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "searchByRelay",
+        "is_db_write": false
+      }
+    ],
     "OrderQuerySupport#searchByExample": [
       {
         "kind": "mapper",
@@ -1273,6 +1331,14 @@
         "is_db_write": false
       }
     ],
+    "StatsService#searchByRelay": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectByExample",
+        "is_db_write": false
+      }
+    ],
     "StatsService#topWallets": [
       {
         "kind": "component",
@@ -1297,6 +1363,20 @@
         "is_db_write": false
       }
     ],
+    "WalletController#chainCall": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "getSelf",
+        "is_db_write": false
+      },
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
+        "is_db_write": false
+      }
+    ],
     "WalletController#countUsers": [
       {
         "kind": "mapper",
@@ -1305,11 +1385,35 @@
         "is_db_write": false
       }
     ],
+    "WalletController#exampleRelay": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "relayUserExample",
+        "is_db_write": false
+      }
+    ],
     "WalletController#exampleSupport": [
       {
         "kind": "component",
         "class": "OrderQuerySupport",
         "method": "searchByExample",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#localNew": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#localVar": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
         "is_db_write": false
       }
     ],
@@ -1760,6 +1864,30 @@
         }
       ],
       "file": "src\\main\\java\\com\\demo\\service\\OrderQuerySupport.java"
+    },
+    {
+      "owner": "StatsService#searchByRelay",
+      "via": "mp-example",
+      "kind": "SELECT",
+      "text": "SELECT * FROM users WHERE (nickname = ?) AND (create_time > ?)",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.create_time (User.createTime)",
+        "users.id (User.id)",
+        "users.nickname (User.nickname)",
+        "users.openid (User.openid)",
+        "users.wallet_balance (User.walletBalance)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/wallet/example-relay"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
     }
   ]
 }

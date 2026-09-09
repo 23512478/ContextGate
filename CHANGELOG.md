@@ -4,6 +4,12 @@
 
 ## [未发布]
 
+- **Example 参数多跳传播**：Example 作方法参数转传（A 拼 → B 拼 → C 消费）沿调用链不动点接力，条件跨跳不丢（旧版只追一跳）；种子按语句集合单调增长收敛，互传/自环不死循环。demo 实测 Controller → 中转层 → 终点两层条件都进终点合成 SQL：`WHERE (nickname = ?) AND (create_time > ?)`
+  - 修复顺带：传播种子语句改用 `;\n` 拼接（旧版 `\n` 会让整块种子被当成一条语句，criteria 分组语义塌缩、条件挤进同一组）
+- **链式返回值接收者解析**：`a.getService().listUsers()` 的尾方法旧版完全收不到（recv 位置是 `)`）；现在中间节为无参 getter 时按方法签名 `ret_type` 逐节解析类型，尾方法接入调用链
+- **方法内局部对象接收者**：`XxxService s = new XxxService()` 与 `var s = new XxxService()` 建方法级局部变量类型表，字段表查不到时兜底（旧版注释写着"MVP 不追"）；实体/Example 类型的局部调用不产边（噪音过滤）
+- demo 夹具新增 4 条路由（`example-relay` / `chain-call` / `local-new` / `local-var`），断言 7.38-7.40
+
 ## [v0.2.0] — 2026-09-08
 
 v0.1.0 之后经过 **4 轮、23 个真实开源项目**练兵（mall / vhr / ruoyi-vue-pro / yudao-cloud / pig / litemall / JeecgBoot / snowy / dax-pay 等），内嵌 SQL 识别从 v0.1.0 的单点规则演进为跨方法/跨类的数据流分析。

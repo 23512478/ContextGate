@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-08 16:03:43
-- 扫描类: 25 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 29 条 | 调用图边: 50 个方法
+- 生成时间: 2026-09-09 22:46:59
+- 扫描类: 25 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 33 条 | 调用图边: 57 个方法
 
 ---
 
@@ -111,9 +111,18 @@
    └─ StatsService#topWallets
       ├─ JdbcTemplate#queryForList  （组件/工具）
 
+### `GET /api/v1/wallet/chain-call`
+**WalletController#chainCall**
+   ├─ OrderQuerySupport#getSelf  （组件/工具）
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
+
 ### `GET /api/v1/wallet/count`
 **WalletController#countUsers**
    ├─ UserMapper#selectCount  （MP 内置）
+
+### `GET /api/v1/wallet/example-relay`
+**WalletController#exampleRelay**
+   ├─ OrderQuerySupport#relayUserExample  （组件/工具）
 
 ### `GET /api/v1/wallet/example-support`
 **WalletController#exampleSupport**
@@ -122,6 +131,14 @@
 ### `GET /api/v1/wallet/lambda`
 **WalletController#byLambda**
    ├─ UserMapper#selectByNicknameLambda  （Mapper 方法，SQL 未找到）
+
+### `GET /api/v1/wallet/local-new`
+**WalletController#localNew**
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
+
+### `GET /api/v1/wallet/local-var`
+**WalletController#localVar**
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
 
 ### `GET /api/v1/wallet/me`
 **WalletController#me**
@@ -251,8 +268,9 @@ UserMapper#selectById
 
 > 改 SQL 前必查：上游有多少路由依赖它，动了会炸几个接口。
 
-- **UserMapper#selectByExample** ← 2 条路由 ⚠️
-  - 直接调用者: `OrderQuerySupport#searchByExample`, `WalletController#searchExample`
+- **UserMapper#selectByExample** ← 3 条路由 🔥
+  - 直接调用者: `OrderQuerySupport#searchByExample`, `StatsService#searchByRelay`, `WalletController#searchExample`
+  - `GET /api/v1/wallet/example-relay`
   - `GET /api/v1/wallet/example-support`
   - `GET /api/v1/wallet/search-example`
 - **UserMapper#selectByNicknameLambda** ← 1 条路由 
@@ -375,3 +393,7 @@ UserMapper#selectById
   - `SELECT * FROM users WHERE nickname = ?`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/wallet/example-support`
+- **StatsService#searchByRelay** — @SELECT（MP Example）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT * FROM users WHERE (nickname = ?) AND (create_time > ?)`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/wallet/example-relay`

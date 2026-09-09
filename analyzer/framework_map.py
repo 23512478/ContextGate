@@ -738,16 +738,40 @@ _EXAMPLE_CONSUME = {"selectbyexample": ("SELECT", True), "countbyexample": ("SEL
                     "updatebyexampleselective": ("UPDATE", True)}
 
 
-def _example_defuse(owner, body, ent_by_simple, table_to_entity, seed_text="", params=""):
+def _example_defuse(owner, body, ent_by_simple, table_to_entity, seed_text="", params="",
+                    cls=None, example_params=None):
     """MyBatis Generator 的 Example 动态条件：
     new XxxExample → createCriteria().andXxxEqualTo(...) → selectByExample(example)。
-    criteria 分组语义：createCriteria() 开 AND 组、or() 开 OR 组，组内条件 AND 连接，
-    组间按组连接词（多组时每组加括号）。seed_text 为跨方法传播的调用方语句
-    （Example 作方法参数传入时，调用方拼的条件由此归并）。"""
+    criteria 分组语义：createCriteria() 开 AND 组、or() 开 OR 组（含 example.or().andXxx()
+    匿名组），多组时带括号、组间按连接词连接。seed_text 为跨方法传播的调用方语句
+    （Example 作方法参数传入时，调用方拼的条件由此归并）。
+    cls + example_params 给出时，方法体里把 Example 变量继续传给下一个带 Example
+    参数的方法（有方法体）会产出传播目标 (目标类, 目标方法, 种子语句)——多跳由此接力，
+    种子取自 full（含上游归并进来的语句），条件沿链不丢。
+    返回 (records, pending_props)。"""
     full = f"{seed_text}\n{body}" if seed_text else body
     ent_m = re.search(r"\b(\w+)Example\s+(\w+)\s*=\s*new\s+\w+Example\b", full)
+    props = []
+    if cls is not None and example_params is not None:
+        # Example 变量继续传给下一个带 Example 参数的方法 → 产出传播目标。
+        # 变量类型来源：本方法 new 出来的 + 签名上的 Example 参数（转传方法没有 new）
+        ex_var_types = {m.group(2): m.group(1) for m in
+                        re.finditer(r"\b(\w+Example)\s+(\w+)\s*=\s*new\s+\w+Example\b", full)}
+        em0 = re.search(r"\b(\w+Example)\s+(\w+)", params or "")
+        if em0:
+            ex_var_types[em0.group(2)] = em0.group(1)
+        for cm3 in re.finditer(r"\b(?:(\w+)\s*\.\s*)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)", full):
+            recv3, name3, args3 = cm3.group(1), cm3.group(2), cm3.group(3)
+            for v3 in ex_var_types:
+                if not re.search(rf"\b{re.escape(v3)}\b", args3):
+                    continue
+                recv_cls3 = (cls["fields"].get(recv3) or recv3) if recv3 else cls["name"]
+                if (recv_cls3, name3) in example_params:
+                    seed2 = _example_seed_statements(full, v3)
+                    if seed2.strip():
+                        props.append((recv_cls3, name3, seed2))
     if not ent_m:
-        return []
+        return [], props
     ent = ent_by_simple.get(ent_m.group(1))
     if not ent or not ent.get("entity_columns"):
         return []
@@ -843,7 +867,7 @@ def _example_defuse(owner, body, ent_by_simple, table_to_entity, seed_text="", p
             cols = [f"{table}.{c} ({ent_name}.{f})" for f, c in ecols.items()]
         recs.append({"owner": owner, "via": "mp-example", "kind": kind, "text": text,
                      "tables": [table], "columns": sorted(set(cols))})
-    return recs
+    return recs, props
 
 
 def scan_inline_sql(classes, by_simple, table_to_entity):
@@ -1009,26 +1033,12 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
             pending_props.extend(props2)
 
             # ---- 3) MBG Example 动态条件 ----
-            out.extend(_example_defuse(owner, body, ent_by_simple, table_to_entity,
-                                       params=meth.get("params")))
-            # 3b) Example 作参数传给其他方法：按变量类型识别（方法名不限），
-            #     目标方法须带 Example 参数且有方法体
-            ex_var_types = {m.group(2): m.group(1) for m in
-                            re.finditer(r"\b(\w+Example)\s+(\w+)\s*=\s*new\s+\w+Example\b", body)}
-            em3 = re.search(r"\b(\w+Example)\s+(\w+)", meth.get("params") or "")
-            if em3:
-                ex_var_types[em3.group(2)] = em3.group(1)
-            if ex_var_types:
-                for cm3 in re.finditer(r"\b(?:(\w+)\s*\.\s*)?(\w+)\s*\(((?:[^()]|\([^()]*\))*)\)", body):
-                    recv3, name3, args3 = cm3.group(1), cm3.group(2), cm3.group(3)
-                    for v3, t3 in ex_var_types.items():
-                        if not re.search(rf"\b{re.escape(v3)}\b", args3):
-                            continue
-                        recv_cls3 = (c["fields"].get(recv3) or recv3) if recv3 else c["name"]
-                        if (recv_cls3, name3) in example_params:
-                            seed_text = _example_seed_statements(body, v3)
-                            if seed_text.strip():
-                                pending_example.append((recv_cls3, name3, seed_text))
+            # 传播目标检测已内化在 _example_defuse 里（基于 body 收集，第一跳）
+            ex_recs, ex_props = _example_defuse(owner, body, ent_by_simple, table_to_entity,
+                                                params=meth.get("params"), cls=c,
+                                                example_params=example_params)
+            out.extend(ex_recs)
+            pending_example.extend(ex_props)
 
             # ---- 4) 泛型实体上的字段值便捷调用 ----
             # (a) Mapper 接口：selectOne(Entity::getField, value)（支持多字段对，yudao 风格）
@@ -1116,6 +1126,7 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
         r.pop("_param_var", None)
 
     seen_ex = set()
+    ex_pair_seeds = {}   # (目标类, 目标方法) -> 已播种子的语句集合（多跳收敛防护）
     queue = pending_example
     while queue:
         nxt = []
@@ -1124,32 +1135,49 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
             if key in seen_ex:
                 continue
             seen_ex.add(key)
+            # 互传防护：这个目标的种子语句集合若不再增长（新种子 ⊆ 已播），停止接力，
+            # 否则 A 传 B、B 传 A 时种子每轮变大、(tc,tm,seed) 去重失效，死循环
+            seed_set = frozenset(seed.split("\n"))
+            prior = ex_pair_seeds.get((tc, tm))
+            if prior is not None and seed_set <= prior:
+                continue
+            ex_pair_seeds.setdefault((tc, tm), set()).update(seed_set)
             tcls = by_simple.get(tc)
             if not tcls:
                 continue
             meth = next((m for m in tcls["methods"] if m["name"] == tm), None)
             if not meth or not meth.get("body_raw"):
                 continue
-            out.extend(_example_defuse(f"{tc}#{tm}", meth["body_raw"],
-                                       ent_by_simple, table_to_entity, seed_text=seed,
-                                       params=meth.get("params")))
+            ex_recs, ex_props = _example_defuse(
+                f"{tc}#{tm}", meth["body_raw"], ent_by_simple, table_to_entity,
+                seed_text=seed, params=meth.get("params"), cls=tcls,
+                example_params=example_params)
+            out.extend(ex_recs)
+            nxt.extend(ex_props)
         queue = nxt
     return out
 
 
 def _example_seed_statements(body, ex_var):
     """收集方法体里与 Example 变量相关的语句（定义、criteria 派生、条件调用、消费），
-    作为传播种子拼给目标方法的 Example 参数。criteria 变量随赋值关系闭包扩张。"""
+    作为传播种子拼给目标方法的 Example 参数。criteria 变量随赋值关系闭包扩张。
+    起始变量集并入 body 里所有 Example 类型声明变量：链上各跳的变量名可能不同
+    （调用方叫 ex、接收方参数叫 example），种子必须带上链上全部条件语句，
+    否则多跳传播到第二跳时 new 定义丢失、终点拼不出 SQL。"""
     stmts = _split_statements(body)
     keep = []
     crit_vars = {ex_var}
+    crit_vars |= {m.group(1) for m in
+                  re.finditer(r"\b\w+Example\s+(\w+)\s*=\s*new\s+\w+Example\b", body)}
     for st in stmts:
         if any(re.search(rf"\b{re.escape(v)}\b", st) for v in crit_vars):
             keep.append(st.strip())
             nm = re.search(rf"\b(?:\w+)\s+(\w+)\s*=\s*{re.escape(ex_var)}\.(?:createCriteria|or)\s*\(", st)
             if nm:
                 crit_vars.add(nm.group(1))
-    return "\n".join(keep)
+    # 分号补回去：种子传到目标方法后 _split_statements 按分号切分，
+    # 用 \n 拼会让整块种子变成"一条语句"，criteria 分组语义全塌（条件挤进同一组）
+    return ";\n".join(keep)
 
 
 def _wrapper_record(owner, region, wtype, ent_name, ent_by_simple, table_to_entity):
@@ -1387,6 +1415,15 @@ TABLE_FIELD_RE = re.compile(
 )
 # 方法体里的 field.method( 调用
 CALL_RE = re.compile(r"(?<![\w.])([a-z]\w*)\.([a-z]\w*)\s*\(")
+# 链式调用 userService.getService().listUsers()：CALL_RE 的 recv 只认单标识符，
+# 尾方法（真正想追的目标）在这里被丢掉。中转每节是无参 getter，返回类型写在
+# 方法签名里（ret_type 已采集），可静态逐节解析；节内 \w*/\s* 均线性，无嵌套量词
+_CHAIN_CALL_RE = re.compile(
+    r"(?<![\w.])([a-z]\w*)((?:\s*\.\s*[a-z]\w*\s*\(\s*\))+)\s*\.\s*([a-z]\w*)\s*\(")
+# 方法内局部变量声明 Type var = ...（含 var v = new T()，类型从 new 右值取）。
+# 只在方法体 clean 副本上扫（字面量已抹白，语句结构还在），注释/字符串不误收
+_LOCAL_DECL_RE = re.compile(
+    r"(?<![\w.])((?:[A-Z][\w.]*(?:\s*<[^<>]*>)?)|var)\s+(\w+)\s*=\s*")
 # 方法体里的裸调用（本类 private 方法委托），前面不能是 . 或单词字符
 BARE_CALL_RE = re.compile(r"(?<![\w.])([a-z]\w*)\s*\(")
 BARE_SKIP = {"if", "for", "while", "switch", "catch", "return", "new", "synchronized",
@@ -1527,6 +1564,22 @@ def parse_java(path):
         bare_calls = [c.group(1) for c in BARE_CALL_RE.finditer(m_body_clean)
                       if c.group(1) not in BARE_SKIP]
         method_refs = [(c.group(1), c.group(2)) for c in METHOD_REF_RE.finditer(m_body_clean)]
+        # 链式调用：userService.getService().listUsers() → (根, getter 节列表, 尾方法)。
+        # 重复组只留最后一次捕获，getter 节在 group(2) 文本上二次线性剥出
+        chain_calls = []
+        for ccm in _CHAIN_CALL_RE.finditer(m_body_clean):
+            getters = tuple(re.findall(r"([a-z]\w*)\s*\(\s*\)", ccm.group(2)))
+            chain_calls.append((ccm.group(1), getters, ccm.group(3)))
+        # 方法内局部变量类型表：resolve_callees 兜底用（字段表查不到时）。
+        # var v = new T() 类型取 new 右值；普通声明取声明类型（右值是什么不重要）
+        local_vars = {}
+        for lvm in _LOCAL_DECL_RE.finditer(m_body_clean):
+            if lvm.group(1) == "var":
+                nm = re.match(r"\s*new\s+([\w.]+)", m_body_clean[lvm.end():])
+                if nm:
+                    local_vars[lvm.group(2)] = simple_type(nm.group(1))
+            else:
+                local_vars[lvm.group(2)] = simple_type(lvm.group(1))
         methods.append({
             "name": mname,
             "params": params,
@@ -1539,6 +1592,8 @@ def parse_java(path):
             "calls": calls,
             "bare_calls": bare_calls,
             "method_refs": method_refs,
+            "chain_calls": chain_calls,
+            "local_vars": local_vars,
             "transactional": "@Transactional" in m_ann_raw,
             # 原始方法体（含字符串字面量）：JdbcTemplate 裸 SQL / Wrapper 链分析用
             "body_raw": raw[brace_idx:mb_end + 1] if end_char == "{" else "",
@@ -1581,6 +1636,8 @@ def resolve_callees(target, mname, by_simple, impl_of):
     """解析 target 类的 mname 方法的下游调用。
     返回 [(kind, callee_class_simple, callee_method, mapper_write)]，
     kind ∈ {"self", "service", "mapper", "component"}。
+    接收者类型三个来源：字段表（注入字段）、方法内局部变量表（含 new 出来的）、
+    链式调用逐节 getter 的返回类型（userService.getService().list()）。
     visit() 渲染和调用图构建共用这套逻辑，避免两处实现分叉。"""
     method = None
     for m in target["methods"]:
@@ -1620,22 +1677,51 @@ def resolve_callees(target, mname, by_simple, impl_of):
                 mapped = _SERVICE_BUILTIN_MAP[bc]
                 out.append(("mapper", sm.group(1), mapped, mapped in MP_WRITE))
 
-    for field, cmethod in method["calls"]:
-        if field == "this":
-            continue
-        ftype = target["fields"].get(field)
-        if not ftype:
-            continue  # 局部变量/静态调用，MVP 不追
+    def emit(ftype, cmethod, allow_component):
         fcls = by_simple.get(ftype)
         if fcls and fcls["is_mapper"]:
-            is_write = cmethod in MP_WRITE or (fcls is not None and _sql_kind(by_simple, ftype, cmethod) in ("UPDATE", "INSERT", "DELETE"))
+            is_write = cmethod in MP_WRITE or _sql_kind(by_simple, ftype, cmethod) in ("UPDATE", "INSERT", "DELETE")
             out.append(("mapper", ftype, cmethod, is_write))
         elif fcls and (fcls["kind"] == "interface" or fcls["is_service_impl"]) and (ftype.endswith("Service") or _impl_of(ftype, impl_of)):
             # 归一化到实现类：图节点只建在 class 上，接口会导致逆向 BFS 断链
             impl_name = impl_of.get(ftype) or ftype
             out.append(("service", impl_name, cmethod, False))
-        else:
+        elif allow_component:
             out.append(("component", ftype, cmethod, False))
+
+    def local_type_ok(ftype):
+        # 局部变量/链式来源的类型过滤：类型必须在 by_simple（String/List 等
+        # 查不到的天然拦掉），且不是实体/Example——u.setXxx()、criteria 链
+        # 不是组件调用，收进来全是噪音边
+        fcls = by_simple.get(ftype)
+        return bool(fcls) and not fcls.get("is_entity") and not ftype.endswith("Example")
+
+    local_vars = method.get("local_vars") or {}
+    for field, cmethod in method["calls"]:
+        if field == "this":
+            continue
+        ftype = target["fields"].get(field)
+        if ftype:
+            emit(ftype, cmethod, True)
+            continue
+        ltype = local_vars.get(field)
+        if ltype and local_type_ok(ltype):
+            emit(ltype, cmethod, True)
+        # 两张表都查不到：静态调用/运行期才解析的接收者，不追
+
+    # 链式调用 userService.getService().listUsers()：CALL_RE 收不到尾方法，
+    # 从链式记录逐节 getter 解析返回类型（ret_type 采集自方法签名），尾方法当真实调用
+    for root, getters, tail in method.get("chain_calls", []):
+        t = target["fields"].get(root) or local_vars.get(root)
+        for g in getters:
+            gcls = by_simple.get(t) if t else None
+            g_meth = next((m2 for m2 in gcls["methods"] if m2["name"] == g), None) if gcls else None
+            if not g_meth or not g_meth.get("ret_type"):
+                t = None
+                break
+            t = simple_type(g_meth["ret_type"])
+        if t and local_type_ok(t):
+            emit(t, tail, True)
     return out
 
 

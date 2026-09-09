@@ -61,4 +61,34 @@ public class WalletController {
         ex.createCriteria().andNicknameEqualTo(nickname);
         return orderQuerySupport.searchByExample(ex);
     }
+
+    /** Example 多跳传播：Controller 拼 nickname → 中转层拼 create_time → 终点消费。
+     *  修好的行为：终点的合成 SQL 应同时含两层条件（旧版只传一跳，Controller 的丢了）。 */
+    @GetMapping("/wallet/example-relay")
+    public List<User> exampleRelay(@RequestParam String nickname) {
+        UserExample ex = new UserExample();
+        ex.createCriteria().andNicknameEqualTo(nickname);
+        orderQuerySupport.relayUserExample(ex);
+        return null;
+    }
+
+    /** 链式返回值接收者：CALL_RE 只认「标识符.方法(」，尾方法 listUsersDirect 旧版收不到。 */
+    @GetMapping("/wallet/chain-call")
+    public User chainCall(@RequestParam Long userId) {
+        return orderQuerySupport.getSelf().listUsersDirect(userId);
+    }
+
+    /** 方法内 new 出来的局部对象：类型不在注入字段表里，旧版断链。 */
+    @GetMapping("/wallet/local-new")
+    public User localNew(@RequestParam Long userId) {
+        OrderQuerySupport support = new OrderQuerySupport();
+        return support.listUsersDirect(userId);
+    }
+
+    /** var 关键字局部变量：类型从 new 右值取。 */
+    @GetMapping("/wallet/local-var")
+    public User localVar(@RequestParam Long userId) {
+        var support = new OrderQuerySupport();
+        return support.listUsersDirect(userId);
+    }
 }

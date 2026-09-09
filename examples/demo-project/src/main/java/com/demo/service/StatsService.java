@@ -1,6 +1,8 @@
 package com.demo.service;
 
 import com.demo.constant.SqlParts;
+import com.demo.entity.UserExample;
+import com.demo.mapper.UserMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
@@ -14,6 +16,9 @@ public class StatsService {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private UserMapper userMapper;
 
     /** 余额榜：裸 SELECT，触碰 users.wallet_balance。 */
     public List<Map<String, Object>> topWallets() {
@@ -54,5 +59,10 @@ public class StatsService {
 
     public List<Map<String, Object>> demoOpenidCross() {
         return jdbcTemplate.queryForList(SQL_OPENID_CROSS);
+    }
+
+    /** Example 多跳传播的终点：自己不拼条件，只消费透传进来的 Example。 */
+    public List<com.demo.entity.User> searchByRelay(UserExample example) {
+        return userMapper.selectByExample(example);
     }
 }
