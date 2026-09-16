@@ -379,6 +379,38 @@ def main():
         assert "selectById" in out_var, \
             "var v = new T()：类型应从 new 右值取"
 
+        # 7.41 Wrapper .select() 列裁剪：MP 内置 selectList 的保守全列应收窄到 select 列
+        out_sel = call_tool(proc, "find_sql", {"query": "selPrune"})
+        assert "SELECT id, nickname FROM users WHERE id = ?" in out_sel, \
+            "Wrapper .select() 消费点的 mp-wrapper 记录应裁剪到 select 列"
+        out_sel_imp = call_tool(proc, "impact", {"entity": "User"})
+        assert any("selectList" in ln and "触碰 2 列" in ln and "✂" in ln
+                   for ln in out_sel_imp.splitlines()), \
+            "MP 内置 selectList 的全列记录应按 Wrapper .select() 收窄为实际列（✂ 标记）"
+        assert any("selectByExample" in ln and "触碰 5 列" in ln
+                   for ln in out_sel_imp.splitlines()), \
+            "Example 消费没有 select 概念，selectByExample 应保持全列不裁"
+
+        # 7.42 getter 带参的链式中转：getService(userId) 带参，尾方法 listUsersDirect 应接入
+        out_carg = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/chain-arg"})
+        assert "listUsersDirect" in out_carg and "selectById" in out_carg, \
+            "带参 getter 中转：尾方法应接入调用链直到 Mapper 内置方法"
+
+        # 7.43 运行期接收者：getBean 链式 / var+getBean / Object 字段（直调+强转）
+        out_bean = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/bean-chain"})
+        assert "listUsersDirect" in out_bean and "selectById" in out_bean \
+            and "ApplicationContext" not in out_bean, \
+            "getBean(X.class).m()：类型应从 .class 参数取，且不再产生 getBean 噪音边"
+        out_bvar = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/bean-var"})
+        assert "selectById" in out_bvar, \
+            "var v = ctx.getBean(X.class)：类型应从 .class 参数取"
+        out_objf = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/obj-field"})
+        assert "listUsersDirect" in out_objf and "selectById" in out_objf, \
+            "Object 字段：@PostConstruct 里 new 赋值应推断出真实类型"
+        out_ocast = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/obj-cast"})
+        assert "selectById" in out_ocast, \
+            "((X) helper).m() 强转调用：强转类型即接收者类型"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

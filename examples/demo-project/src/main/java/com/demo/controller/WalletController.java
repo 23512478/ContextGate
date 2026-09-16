@@ -1,10 +1,12 @@
 package com.demo.controller;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.entity.User;
 import com.demo.service.OrderQuerySupport;
 import com.demo.entity.UserExample;
 import com.demo.mapper.UserMapper;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.ApplicationContext;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -19,6 +21,12 @@ public class WalletController {
 
     @Autowired
     private OrderQuerySupport orderQuerySupport;
+
+    @Autowired
+    private ApplicationContext ctx;
+
+    /** Object 字段：类型运行期才能确定（initHelper 里 new 赋值）。 */
+    private Object helper;
 
     /** 充值：自定义 @Update 写 wallet_balance。 */
     @PostMapping("/wallet/recharge")
@@ -90,5 +98,50 @@ public class WalletController {
     public User localVar(@RequestParam Long userId) {
         var support = new OrderQuerySupport();
         return support.listUsersDirect(userId);
+    }
+
+    /** 链式带参中转：getService(userId) 带参，旧版只认无参 getter，尾方法断链。 */
+    @GetMapping("/wallet/chain-arg")
+    public User chainArg(@RequestParam Long userId) {
+        return orderQuerySupport.getService(userId).listUsersDirect(userId);
+    }
+
+    /** 运行期接收者：getBean 出来的 bean 直接链式调用（旧版只剩 getBean 噪音边）。 */
+    @GetMapping("/wallet/bean-chain")
+    public User beanChain(@RequestParam Long userId) {
+        return ctx.getBean(OrderQuerySupport.class).listUsersDirect(userId);
+    }
+
+    /** 运行期接收者：var + getBean 赋给局部变量再调用。 */
+    @GetMapping("/wallet/bean-var")
+    public User beanVar(@RequestParam Long userId) {
+        var svc = ctx.getBean(OrderQuerySupport.class);
+        return svc.listUsersDirect(userId);
+    }
+
+    /** 运行期接收者：Object 字段直调（@PostConstruct 里 new 赋值，赋值推断类型）。 */
+    @GetMapping("/wallet/obj-field")
+    public User objField(@RequestParam Long userId) {
+        return helper.listUsersDirect(userId);
+    }
+
+    /** 运行期接收者：Object 字段强转调用 ((X) helper).m()，强转类型即接收者类型。 */
+    @GetMapping("/wallet/obj-cast")
+    public User objCast(@RequestParam Long userId) {
+        return ((OrderQuerySupport) helper).listUsersDirect(userId);
+    }
+
+    @org.springframework.beans.factory.annotation.PostConstruct
+    public void initHelper() {
+        helper = new OrderQuerySupport();
+    }
+
+    /** Wrapper .select() 列裁剪：MP 内置 selectList 的保守"全列"应收窄到 select 列。 */
+    @GetMapping("/wallet/sel-prune")
+    public List<User> selPrune(@RequestParam Long userId) {
+        LambdaQueryWrapper<User> w = new LambdaQueryWrapper<>();
+        w.select(User::getId, User::getNickname);
+        w.eq(User::getId, userId);
+        return userMapper.selectList(w);
     }
 }

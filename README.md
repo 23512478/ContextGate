@@ -38,7 +38,7 @@ Spring Boot + MyBatis 项目的调用关系大量是**隐式约定**：一个 HT
 - **一键刷新**：代码改完让 AI 调 `refresh_map`，秒级重跑分析器
 - **多项目**：配置 `CODECONTEXT_MAPS_DIR` 后一个 server 管多个项目——`refresh_map` 自动注册、查询工具 `project` 参数切换、`list_maps` 列出全部项目和地图新鲜度
 
-已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、**链式返回值接收者**（`a.getService().x()`，中间节须为无参 getter，按签名返回类型逐节解析）、**方法内 `new`/`var` 局部对象接收者**（方法级局部变量类型表兜底）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`（含 `extends` 继承、`<association>`/`<collection>` 嵌套映射与 `select=` 懒加载子查询链接）/`<sql>`+`<include>`/`<set>`/`<if>`/`<foreach>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参、类级 `static final` 常量及**同类常量互拼折叠**、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链、**Wrapper 拆变量跨语句链式调用**含拷贝别名、方法参数、**helper 方法条件归并**与 Mapper default 方法 `this.lambda()` 链）、实体映射（`@TableName/@TableField` **或** model/domain/entity 等包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法（count 族标 0 列）、**MyBatis Generator `Example` 动态条件**（`andXxxEqualTo` 链 + `selectByExample` 消费合成 WHERE）、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（21 个 Java 文件 + XML），每种规则都有夹具和回归断言。
+已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、**链式返回值接收者**（`a.getService(x).x()`，中间节 getter 可带参，按签名返回类型逐节解析，根可为字段/局部变量/本类裸调用）、**方法内 `new`/`var` 局部对象接收者**（方法级局部变量类型表兜底）、**运行期接收者**（`getBean(X.class)` 类型从 `.class` 参数取、`Object`/泛型 `T` 字段按赋值推断、`((X) helper).m()` 强转即类型）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`（含 `extends` 继承、`<association>`/`<collection>` 嵌套映射与 `select=` 懒加载子查询链接）/`<sql>`+`<include>`/`<set>`/`<if>`/`<foreach>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参、类级 `static final` 常量及**同类常量互拼折叠**、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链、**Wrapper 拆变量跨语句链式调用**含拷贝别名、方法参数、**helper 方法条件归并**与 Mapper default 方法 `this.lambda()` 链）、实体映射（`@TableName/@TableField` **或** model/domain/entity 等包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法（count 族标 0 列；消费点 Wrapper 带显式 `.select()` 时**列裁剪**收窄为实际触碰列）、**MyBatis Generator `Example` 动态条件**（`andXxxEqualTo` 链 + `selectByExample` 消费合成 WHERE）、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（21 个 Java 文件 + XML），每种规则都有夹具和回归断言。
 
 ## 目录结构
 
@@ -124,8 +124,9 @@ python mcp-server/test_mcp.py
 ## 已知边界（诚实清单）
 
 - **正则级解析，不是真 Java AST**：复杂语法（内部类、Lombok 生成方法等）可能漏，遇到再补规则
-- **MyBatis-Plus 内置方法：行读取标全列、count 族标 0 列**——`selectById`/`selectList` 底层就是取整行，标"触碰全部列"是语义事实而非近似；`selectCount`/`count`/`exists`/`countByExample` 是 COUNT，不触碰业务列
-- **Wrapper 跨语句/跨方法/跨类**：定义/续链/消费点分离、if/for 分支内续链（保守计入，宁多报不漏）、拷贝别名（`w2 = w`）、Wrapper 作方法参数、本类/跨类 helper 构建（`lqw = buildXxx(...)` / `lqw = Other.buildXxx(...)`，含 helper 套 helper）都可解析；调用方拼的条件经参数传播归并，**沿调用链不动点收敛——多跳、跨类可追**（实测 Controller → Service A → Service B → Mapper 三跳，条件不丢）。前提：每跳目标方法有方法体、接收者类型可解析（注入字段、类名、方法内 `new`/`var` 局部变量、无参 getter 链式返回值均可）；仍不追的：getter 带参的链式中转、运行期才解析的接收者（`getBean(...)`、声明为 `Object`/泛型 `T` 的字段）
+- **MyBatis-Plus 内置方法：行读取标全列、count 族标 0 列**——`selectById`/`selectList` 底层就是取整行，标"触碰全部列"是语义事实而非近似；`selectCount`/`count`/`exists`/`countByExample` 是 COUNT，不触碰业务列。例外：消费点的 Wrapper 链静态可见且带显式 `.select(...)` 时，全列收窄为实际 select 列（impact 里带 ✂ 标记）；要求该消费点的每个调用方都可见，有看不见的宁可保守不裁
+- **Wrapper 跨语句/跨方法/跨类**：定义/续链/消费点分离、if/for 分支内续链（保守计入，宁多报不漏）、拷贝别名（`w2 = w`）、Wrapper 作方法参数、本类/跨类 helper 构建（`lqw = buildXxx(...)` / `lqw = Other.buildXxx(...)`，含 helper 套 helper）都可解析；调用方拼的条件经参数传播归并，**沿调用链不动点收敛——多跳、跨类可追**（实测 Controller → Service A → Service B → Mapper 三跳，条件不丢）。前提：每跳目标方法有方法体、接收者类型可解析（注入字段、类名、方法内 `new`/`var` 局部变量、链式返回值均可——中转 getter 可带参，根可为字段或本类裸调用）；仍不追的：运行期拼出来的接收者（工厂方法返回值、纯泛型绑定无赋值线索）
+- **运行期接收者的降级解析**：`ctx.getBean(X.class).m()` 类型从 `.class` 参数取（`var v = ctx.getBean(X.class)` 同理）；声明为 `Object`/泛型 `T` 的字段若在本类（或子类）方法体里被 `new X()` / `getBean(X.class)` / `(X) ...` 赋值，按赋值推断真实类型；`((X) helper).m()` 强转类型即接收者类型。`getBean` 本身不再产生噪音边。仍不追的：赋值是工厂方法调用（`f = buildXxx()`）、纯泛型绑定（子类只是 `extends Base<T>` 却从不赋值）
 - **SQL 常量支持字面量拼接、同类互拼折叠与跨类互拼**（`SQL_A = "..." + Other.SQL_B`，全局不动点折叠）；运行期拼参（`"..." + variable`）静态拿不到
 - **MBG `Example` 动态条件**：criteria 分组语义已还原——`createCriteria()` 开 AND 组、`or()` 开 OR 组（含 `example.or().andXxx()` 匿名组），多组时带括号、组间按连接词连接；Example 作方法参数传入时调用方条件经传播归并（方法名不限，按 Example 参数类型识别；与 Wrapper 一样沿调用链多跳传播，互传/自环有收敛防护）
 
@@ -136,7 +137,7 @@ python mcp-server/test_mcp.py
 三种参与方式，按难度排序：
 
 1. **拿你的项目跑一把，报漏报**（最有价值）：`python analyzer/framework_map.py <你的项目>`，对照 `framework_map.md` 找"这条链路/这个字段明明用了却没出现"的地方，提 issue 附一小段 Java/XML 源码即可。
-2. **补解析规则**：已知排队中的规则——Wrapper `.select()` 子查询列裁剪、getter 带参的链式中转、运行期接收者（`getBean` 等，详见上文「已知边界」）。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
+2. **补解析规则**：排队中的规则见上文「已知边界」里各条"仍不追的"（如工厂方法返回值接收者、纯泛型绑定）。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
 3. **适配更多 AI 工具 / 语言**：MCP 是标准协议，接入新工具基本零成本；分析器目前只覆盖 Java 侧。
 
 ## License

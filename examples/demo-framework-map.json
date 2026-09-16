@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-09T22:46:59",
+    "generated_at": "2026-09-16T20:29:47",
     "classes": 25,
     "controllers": 5,
     "mappers": 5,
     "entities": 5,
-    "routes": 33
+    "routes": 39
   },
   "routes": [
     {
@@ -149,6 +149,24 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/wallet/bean-chain",
+      "controller": "WalletController",
+      "handler": "beanChain"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/bean-var",
+      "controller": "WalletController",
+      "handler": "beanVar"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/chain-arg",
+      "controller": "WalletController",
+      "handler": "chainArg"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/wallet/chain-call",
       "controller": "WalletController",
       "handler": "chainCall"
@@ -196,6 +214,18 @@
       "handler": "me"
     },
     {
+      "method": "GET",
+      "path": "/api/v1/wallet/obj-cast",
+      "controller": "WalletController",
+      "handler": "objCast"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/obj-field",
+      "controller": "WalletController",
+      "handler": "objField"
+    },
+    {
       "method": "POST",
       "path": "/api/v1/wallet/recharge",
       "controller": "WalletController",
@@ -206,6 +236,12 @@
       "path": "/api/v1/wallet/search-example",
       "controller": "WalletController",
       "handler": "searchExample"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/sel-prune",
+      "controller": "WalletController",
+      "handler": "selPrune"
     }
   ],
   "mappers": [
@@ -863,6 +899,18 @@
               },
               {
                 "method": "GET",
+                "path": "/api/v1/wallet/bean-chain"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/bean-var"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/chain-arg"
+              },
+              {
+                "method": "GET",
                 "path": "/api/v1/wallet/chain-call"
               },
               {
@@ -876,6 +924,14 @@
               {
                 "method": "GET",
                 "path": "/api/v1/wallet/me"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/obj-cast"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/obj-field"
               }
             ]
           }
@@ -900,6 +956,34 @@
               {
                 "method": "GET",
                 "path": "/api/v1/wallet/count"
+              }
+            ]
+          }
+        },
+        {
+          "name": "selectList",
+          "params": "(MP 内置)",
+          "sql": {
+            "kind": "SELECT",
+            "text": "SELECT id, nickname FROM users WHERE id = ?",
+            "tables": [
+              "users"
+            ],
+            "columns": [
+              "users.id (User.id)",
+              "users.nickname (User.nickname)"
+            ],
+            "mp_builtin": true,
+            "select_pruned": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "WalletController#selPrune"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/sel-prune"
               }
             ]
           }
@@ -1355,11 +1439,41 @@
         "is_db_write": false
       }
     ],
+    "WalletController#beanChain": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#beanVar": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
+        "is_db_write": false
+      }
+    ],
     "WalletController#byLambda": [
       {
         "kind": "mapper",
         "class": "UserMapper",
         "method": "selectByNicknameLambda",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#chainArg": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "getService",
+        "is_db_write": false
+      },
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
         "is_db_write": false
       }
     ],
@@ -1425,6 +1539,22 @@
         "is_db_write": false
       }
     ],
+    "WalletController#objCast": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#objField": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
+        "is_db_write": false
+      }
+    ],
     "WalletController#recharge": [
       {
         "kind": "mapper",
@@ -1438,6 +1568,14 @@
         "kind": "mapper",
         "class": "UserMapper",
         "method": "selectByExample",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#selPrune": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectList",
         "is_db_write": false
       }
     ]
@@ -1463,6 +1601,14 @@
         "PostConstruct"
       ],
       "file": "src\\main\\java\\com\\demo\\config\\DemoDataInitializer.java"
+    },
+    {
+      "class": "WalletController",
+      "method": "objField",
+      "annotations": [
+        "PostConstruct"
+      ],
+      "file": "src\\main\\java\\com\\demo\\controller\\WalletController.java"
     }
   ],
   "inline_sql": [
@@ -1503,6 +1649,27 @@
         {
           "method": "GET",
           "path": "/api/v1/wallet/search-example"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\controller\\WalletController.java"
+    },
+    {
+      "owner": "WalletController#selPrune",
+      "via": "mp-wrapper",
+      "kind": "SELECT",
+      "text": "SELECT id, nickname FROM users WHERE id = ?",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.id (User.id)",
+        "users.nickname (User.nickname)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/wallet/sel-prune"
         }
       ],
       "file": "src\\main\\java\\com\\demo\\controller\\WalletController.java"

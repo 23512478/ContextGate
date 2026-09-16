@@ -1416,10 +1416,18 @@ TABLE_FIELD_RE = re.compile(
 # 方法体里的 field.method( 调用
 CALL_RE = re.compile(r"(?<![\w.])([a-z]\w*)\.([a-z]\w*)\s*\(")
 # 链式调用 userService.getService().listUsers()：CALL_RE 的 recv 只认单标识符，
-# 尾方法（真正想追的目标）在这里被丢掉。中转每节是无参 getter，返回类型写在
-# 方法签名里（ret_type 已采集），可静态逐节解析；节内 \w*/\s* 均线性，无嵌套量词
+# 尾方法（真正想追的目标）在这里被丢掉。中转每节是 getter（可带参，返回类型写在
+# 方法签名 ret_type 里），可静态逐节解析；节内 [^()]* / \s* 均线性，无嵌套量词。
+# 带参中转（getService(userId).list()）的参数不影响返回类型解析，只按方法名查。
+# 根节点支持两种形态：字段/局部变量（orderQuerySupport.getService(x).tail()）和
+# 本类裸调用（getSelf().getService(x).tail()，返回类型从本类方法签名取）
 _CHAIN_CALL_RE = re.compile(
-    r"(?<![\w.])([a-z]\w*)((?:\s*\.\s*[a-z]\w*\s*\(\s*\))+)\s*\.\s*([a-z]\w*)\s*\(")
+    r"(?<![\w.])([a-z]\w*)(\s*\(\s*\))?((?:\s*\.\s*[a-z]\w*\s*\([^()]*\))+)\s*\.\s*([a-z]\w*)\s*\(")
+# 强转调用 ((OrderService) helper).query()：Object/泛型字段经强转后链式调用，
+# 强转类型就是接收者类型（helper 本体类型运行期才能确定，强转给了静态线索）
+_CAST_CALL_RE = re.compile(
+    r"(?<![\w.])\(\s*\(\s*([A-Z][\w.]*)\s*\)\s+([a-z]\w*)\s*\)\s*"
+    r"((?:\s*\.\s*[a-z]\w*\s*\([^()]*\))*)\s*\.\s*([a-z]\w*)\s*\(")
 # 方法内局部变量声明 Type var = ...（含 var v = new T()，类型从 new 右值取）。
 # 只在方法体 clean 副本上扫（字面量已抹白，语句结构还在），注释/字符串不误收
 _LOCAL_DECL_RE = re.compile(
@@ -1479,6 +1487,22 @@ def parse_java(path):
         # 类型是 "return" 的字段，进而把 order.setX() 解析成 return#setX 调用边
         if fname and ftype and ftype.strip() not in RET_KEYWORDS:
             fields[fname] = simple_type(ftype)
+
+    # 字段赋值推断：声明为 Object / 泛型 T 的字段（运行期接收者）在方法体里被
+    # new X() / getBean(X.class) / (X) ... 赋值时，可静态取到真实类型。
+    # this.f = ... 总是收（可覆盖继承字段）；裸 f = ... 仅限本类声明字段，避免
+    # 同名局部变量误收。同一字段多次赋值取最后扫描到的（近似"最后赋值生效"）
+    field_assign = {}
+    for am in re.finditer(r"(?<![\w.])(this\s*\.\s*)?(\w+)\s*=(?![=>])", body_clean):
+        this_q, fname = am.group(1), am.group(2)
+        if not this_q and fname not in fields:
+            continue
+        rhs = body_clean[am.end():]
+        m2 = (re.match(r"\s*new\s+([A-Z][\w.]*)", rhs)
+              or re.match(r"\s*\(\s*([A-Z][\w.]*)\s*\)\s+\w", rhs)
+              or re.search(r"getBean\s*\(\s*[^;]{0,160}?([A-Z][\w.]*)\s*\.\s*class", rhs))
+        if m2:
+            field_assign[fname] = simple_type(next(g for g in m2.groups() if g))
 
     # 类级 static String 常量的字符串值：必须在 body_raw 上收（body_clean 里字面量已被抹白）。
     # 右值支持字面量拼接与同类常量互拼（SQL_A + "x"），迭代折叠到不动点；环/未知标识符放弃
@@ -1564,20 +1588,35 @@ def parse_java(path):
         bare_calls = [c.group(1) for c in BARE_CALL_RE.finditer(m_body_clean)
                       if c.group(1) not in BARE_SKIP]
         method_refs = [(c.group(1), c.group(2)) for c in METHOD_REF_RE.finditer(m_body_clean)]
-        # 链式调用：userService.getService().listUsers() → (根, getter 节列表, 尾方法)。
-        # 重复组只留最后一次捕获，getter 节在 group(2) 文本上二次线性剥出
+        # 链式调用：userService.getService().listUsers() → (根, getter 节列表, 尾方法,
+        # 强转类型, 根是否裸调用)。重复组只留最后一次捕获，getter 节在 group(3) 文本上
+        # 二次线性剥出（参数保留给 getBean(X.class) 解析用）；强转 ((X) var).m() 的
+        # 强转类型即接收者类型；根为裸调用时（getSelf().m()）类型取本类方法返回类型
         chain_calls = []
         for ccm in _CHAIN_CALL_RE.finditer(m_body_clean):
-            getters = tuple(re.findall(r"([a-z]\w*)\s*\(\s*\)", ccm.group(2)))
-            chain_calls.append((ccm.group(1), getters, ccm.group(3)))
+            getters = tuple(re.findall(r"([a-z]\w*)\s*\(([^()]*)\)", ccm.group(3)))
+            chain_calls.append((ccm.group(1), getters, ccm.group(4), None,
+                                bool(ccm.group(2))))
+        for ccm in _CAST_CALL_RE.finditer(m_body_clean):
+            getters = tuple(re.findall(r"([a-z]\w*)\s*\(([^()]*)\)", ccm.group(3)))
+            chain_calls.append((ccm.group(2), getters, ccm.group(4),
+                                simple_type(ccm.group(1)), False))
         # 方法内局部变量类型表：resolve_callees 兜底用（字段表查不到时）。
-        # var v = new T() 类型取 new 右值；普通声明取声明类型（右值是什么不重要）
+        # var v = new T() 类型取 new 右值；var v = ctx.getBean(X.class) 类型取 .class 参数；
+        # 普通声明取声明类型（右值是什么不重要）
         local_vars = {}
         for lvm in _LOCAL_DECL_RE.finditer(m_body_clean):
             if lvm.group(1) == "var":
-                nm = re.match(r"\s*new\s+([\w.]+)", m_body_clean[lvm.end():])
+                rest = m_body_clean[lvm.end():]
+                semi = rest.find(";")
+                rhs = rest[:semi if semi >= 0 else len(rest)]
+                nm = re.match(r"\s*new\s+([\w.]+)", rhs)
                 if nm:
                     local_vars[lvm.group(2)] = simple_type(nm.group(1))
+                else:
+                    gm = re.search(r"getBean\s*\(\s*[^;]{0,160}?([\w.]+)\s*\.\s*class", rhs)
+                    if gm:
+                        local_vars[lvm.group(2)] = simple_type(gm.group(1))
             else:
                 local_vars[lvm.group(2)] = simple_type(lvm.group(1))
         methods.append({
@@ -1607,6 +1646,7 @@ def parse_java(path):
         "extends": extends,
         "implements": implements,
         "fields": fields,
+        "field_assign": field_assign,
         "static_strs": static_strs,
         "static_pending": static_pending,
         "methods": methods,
@@ -1697,25 +1737,67 @@ def resolve_callees(target, mname, by_simple, impl_of):
         return bool(fcls) and not fcls.get("is_entity") and not ftype.endswith("Example")
 
     local_vars = method.get("local_vars") or {}
+
+    def parent_of(c):
+        ext = simple_type(c.get("extends") or "")
+        return by_simple.get(ext) if ext else None
+
+    def field_type_of(cls, fname):
+        """沿继承链解析字段接收者类型：
+        1. 赋值推断优先——this.f = new X() / getBean(X.class) / (X) ... 给了运行期真实类型
+        2. 声明类型兜底——Object / 单字母泛型 T 运行期才能确定，视为未解析
+        返回 None 表示类型不可知（调用点不产边，宁缺毋滥）"""
+        chain, c = [], cls
+        while c is not None and c not in chain:
+            chain.append(c)
+            c = parent_of(c)
+        for c2 in chain:
+            a = (c2.get("field_assign") or {}).get(fname)
+            if a:
+                return a
+        for c2 in chain:
+            t = (c2.get("fields") or {}).get(fname)
+            if t and t != "Object" and not re.fullmatch(r"[A-Z]", t):
+                return t
+        return None
+
     for field, cmethod in method["calls"]:
         if field == "this":
             continue
-        ftype = target["fields"].get(field)
+        if cmethod == "getBean":
+            # getBean 是运行期解析器本身，不是链路节点：
+            # 真正的边来自 ctx.getBean(X.class).m() 链式/局部变量/赋值推断
+            continue
+        ftype = field_type_of(target, field)
         if ftype:
             emit(ftype, cmethod, True)
             continue
         ltype = local_vars.get(field)
         if ltype and local_type_ok(ltype):
             emit(ltype, cmethod, True)
-        # 两张表都查不到：静态调用/运行期才解析的接收者，不追
+        # 都查不到：静态调用/运行期才解析的接收者，不追
 
     # 链式调用 userService.getService().listUsers()：CALL_RE 收不到尾方法，
-    # 从链式记录逐节 getter 解析返回类型（ret_type 采集自方法签名），尾方法当真实调用
-    for root, getters, tail in method.get("chain_calls", []):
-        t = target["fields"].get(root) or local_vars.get(root)
-        for g in getters:
+    # 从链式记录逐节 getter 解析返回类型（ret_type 采集自方法签名），尾方法当真实调用。
+    # getter 可带参（参数不影响返回类型解析）；getBean(X.class) 节点是运行期装配，
+    # 类型直接取 .class 参数；强转 ((X) var).m() 的强转类型就是接收者类型
+    for root, getters, tail, cast, root_call in method.get("chain_calls", []):
+        if cast:
+            t = cast
+        elif root_call:
+            m0 = next((m2 for m2 in target["methods"] if m2["name"] == root), None)
+            t = simple_type(m0["ret_type"]) if m0 and m0.get("ret_type") else None
+        else:
+            t = field_type_of(target, root) or local_vars.get(root)
+        for gname, gargs in getters:
+            if t is None:
+                break
+            if gname == "getBean":
+                bm = re.search(r"([A-Za-z_][\w.]*)\s*\.\s*class", gargs or "")
+                t = simple_type(bm.group(1)) if bm else None
+                continue
             gcls = by_simple.get(t) if t else None
-            g_meth = next((m2 for m2 in gcls["methods"] if m2["name"] == g), None) if gcls else None
+            g_meth = next((m2 for m2 in gcls["methods"] if m2["name"] == gname), None) if gcls else None
             if not g_meth or not g_meth.get("ret_type"):
                 t = None
                 break
@@ -2259,10 +2341,38 @@ def main():
     # MP 内置方法不在接口里声明，但实际被调用（selectById/insert/...）——
     # 补进 mapper 条目，impact/find_sql 才能感知这类隐式 CRUD 的影响面
     builtin_used = {}
+    builtin_callers = {}
     for (_cc, _cm), callees in graph.items():
         for _k, dc, dm, _w in callees:
             if dm in MP_BUILTIN:
                 builtin_used.setdefault(dc, set()).add(dm)
+                builtin_callers.setdefault((dc, dm), []).append(f"{_cc}#{_cm}")
+
+    # Wrapper .select() 列裁剪：MP 内置行读取（selectList 等）的保守"全列"记录，
+    # 在消费点的 Wrapper 链静态可见且带显式 .select(...) 时收窄为实际触碰列。
+    # 要求该消费点的每个调用方都有可见的显式 select 链——有任何一个调用方的
+    # Wrapper 看不见（参数传入/null），宁可保守不裁
+    sel_pruned_by_owner = {}
+    for r in inline_sql:
+        if r.get("via") == "mp-wrapper" and r.get("kind") == "SELECT" \
+                and "SELECT *" not in r.get("text", ""):
+            sel_pruned_by_owner.setdefault(r["owner"], []).append(r)
+
+    def builtin_sql_for(mapper_name, bm, base_entity):
+        base = mp_builtin_sql_record(bm, by_simple.get(base_entity))
+        # 只裁行读取（占位文本 "(MyBatis-Plus 内置 SELECT *)"）；
+        # count 族 0 列、写操作全表写，语义本就不同，不动
+        if not base or base["kind"] != "SELECT" or base["text"] != "(MyBatis-Plus 内置 SELECT *)":
+            return None
+        callers = builtin_callers.get((mapper_name, bm), [])
+        if not callers or not all(o in sel_pruned_by_owner for o in set(callers)):
+            return None
+        recs = [r for o in set(callers) for r in sel_pruned_by_owner[o]]
+        cols = sorted({c for r in recs for c in r["columns"]})
+        texts = {r["text"] for r in recs}
+        text = texts.pop() if len(texts) == 1 else "(MP 内置 SELECT，列已按 Wrapper .select() 裁剪)"
+        return {"kind": "SELECT", "text": text, "tables": base["tables"],
+                "columns": cols, "mp_builtin": True, "select_pruned": True}
 
     data = {
         "meta": {
@@ -2287,6 +2397,7 @@ def main():
                                      "columns": sql_columns.get(f"{mp['name']}#{meth['name']}", [])}
                                     if meth["sql"]
                                     else xml_stmts.get(f"{mp['name']}#{meth['name']}")
+                                    or builtin_sql_for(mp["name"], meth["name"], mp["base_entity"])
                                     or (mp_builtin_sql_record(meth["name"],
                                                               by_simple.get(mp["base_entity"]))
                                         if meth["name"] in MP_BUILTIN else None)),
@@ -2295,9 +2406,11 @@ def main():
                         for meth in mp["methods"]
                     ] + [
                         # 被实际调用的 MP 内置方法（排除与自定义方法同名的）：
-                        # 给一份合成 SQL 记录——SELECT * / 全表写，触碰 base_entity 实体的所有列
+                        # 默认给合成 SQL 记录——SELECT * / 全表写；消费点 Wrapper 链
+                        # 静态可见且带显式 .select(...) 时收窄为实际触碰列
                         {"name": bm, "params": "(MP 内置)",
-                         "sql": mp_builtin_sql_record(bm, by_simple.get(mp["base_entity"])),
+                         "sql": builtin_sql_for(mp["name"], bm, mp["base_entity"])
+                         or mp_builtin_sql_record(bm, by_simple.get(mp["base_entity"])),
                          "reverse": rindex.get(f"{mp['name']}#{bm}")}
                         for bm in sorted(builtin_used.get(mp["name"], set())
                                          - {m["name"] for m in mp["methods"]})

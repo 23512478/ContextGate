@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-09 22:46:59
-- 扫描类: 25 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 33 条 | 调用图边: 57 个方法
+- 生成时间: 2026-09-16 20:29:47
+- 扫描类: 25 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 39 条 | 调用图边: 63 个方法
 
 ---
 
@@ -111,6 +111,19 @@
    └─ StatsService#topWallets
       ├─ JdbcTemplate#queryForList  （组件/工具）
 
+### `GET /api/v1/wallet/bean-chain`
+**WalletController#beanChain**
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
+
+### `GET /api/v1/wallet/bean-var`
+**WalletController#beanVar**
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
+
+### `GET /api/v1/wallet/chain-arg`
+**WalletController#chainArg**
+   ├─ OrderQuerySupport#getService  （组件/工具）
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
+
 ### `GET /api/v1/wallet/chain-call`
 **WalletController#chainCall**
    ├─ OrderQuerySupport#getSelf  （组件/工具）
@@ -144,6 +157,14 @@
 **WalletController#me**
    ├─ UserMapper#selectById  （MP 内置）
 
+### `GET /api/v1/wallet/obj-cast`
+**WalletController#objCast**
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
+
+### `GET /api/v1/wallet/obj-field`
+**WalletController#objField**  [隐藏入口: PostConstruct]
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
+
 ### `POST /api/v1/wallet/recharge`
 **WalletController#recharge**
    ├─ UserMapper#addBalance  → @UPDATE 自定义SQL ✍️写
@@ -152,6 +173,10 @@
 ### `GET /api/v1/wallet/search-example`
 **WalletController#searchExample**
    ├─ UserMapper#selectByExample  （MP 内置）
+
+### `GET /api/v1/wallet/sel-prune`
+**WalletController#selPrune**
+   ├─ UserMapper#selectList  （MP 内置）
 
 ---
 
@@ -318,6 +343,7 @@ UserMapper#selectById
 ## 六、隐藏入口（没有 HTTP 路由但会被框架触发）
 
 - `PostConstruct` → DemoDataInitializer#initDemoData  (`src\main\java\com\demo\config\DemoDataInitializer.java`)
+- `PostConstruct` → WalletController#objField  (`src\main\java\com\demo\controller\WalletController.java`)
 
 ---
 
@@ -332,6 +358,10 @@ UserMapper#selectById
   - `SELECT * FROM users WHERE (nickname = ?) OR (create_time > ?)`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/wallet/search-example`
+- **WalletController#selPrune** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\controller\WalletController.java`)
+  - `SELECT id, nickname FROM users WHERE id = ?`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/wallet/sel-prune`
 - **UserMapper#selectByNicknameLambda** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\mapper\UserMapper.java`)
   - `SELECT id, nickname FROM users WHERE nickname = ?`
   - 涉及表: `users`

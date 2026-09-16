@@ -54,6 +54,11 @@ public class OrderQuerySupport {
         return this;
     }
 
+    /** 带参中转节：旧版链式正则只认无参 getter，带参的尾方法断链。 */
+    public OrderQuerySupport getService(Long tenantId) {
+        return this;
+    }
+
     /** 链式/局部变量场景的落点：直接调 mapper 内置方法（全列触碰）。 */
     public User listUsersDirect(Long userId) {
         return userMapper.selectById(userId);

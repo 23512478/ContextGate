@@ -293,8 +293,9 @@ def find_sql(query: str, project: str = "") -> str:
             sql = info["sql"]
             if not sql:
                 continue
-            # MP 内置方法的合成 SQL 不参与反查——它的 text 是占位符，搜了也没意义
-            if sql.get("mp_builtin"):
+            # MP 内置方法的占位 SQL（"(MyBatis-Plus 内置 SELECT *)"）不参与反查；
+            # 按 Wrapper .select() 裁剪过的记录 text 是真实 SQL，可以搜
+            if sql.get("mp_builtin") and "内置" in sql["text"]:
                 continue
             if ql in key.lower() or ql in sql["text"].lower():
                 hits.append((key, info))
@@ -436,7 +437,14 @@ def impact(entity: str, field: str = "", project: str = "") -> str:
         out.append(f"- 专属 Mapper: {', '.join(f'`{m}`' for m in own_mappers) or '无'}")
         out.append(f"- 被自定义 SQL 触碰: {len(affected_sqls)} 处"
                    + (f"（其中内嵌 {len(inline_hits)} 处）" if inline_hits else ""))
-        out.append(f"- MP 内置 CRUD 调用点: {len(mp_sites)} 个方法（已展开为全列触碰）")
+        pruned_n = sum(1 for _k, s, _c in mp_sites if s and s.get("select_pruned"))
+        if mp_sites and pruned_n == len(mp_sites):
+            mp_label = "（列已按 Wrapper .select() 收窄）"
+        elif pruned_n:
+            mp_label = "（未裁剪的已展开为全列触碰）"
+        else:
+            mp_label = "（已展开为全列触碰）"
+        out.append(f"- MP 内置 CRUD 调用点: {len(mp_sites)} 个方法{mp_label}")
         out.append(f"- 波及路由: {len(route_set)} 条")
         out.append("")
         if affected_sqls:
@@ -463,7 +471,7 @@ def impact(entity: str, field: str = "", project: str = "") -> str:
                 out.append(f"  - `{short}`")
             out.append("")
         if mp_sites:
-            out.append("### MP 内置 CRUD 调用点（SELECT * / 全表写，触碰所有实体列）")
+            out.append("### MP 内置 CRUD 调用点（SELECT * / 全表写；带 ✂ 表示列已按 Wrapper .select() 裁剪）")
             out.append("")
             for key, sql, callers in mp_sites:
                 tail = (f" 等 {len(callers)} 处" if len(callers) > 6 else "")
@@ -472,7 +480,8 @@ def impact(entity: str, field: str = "", project: str = "") -> str:
                     f"`{c}` 🔒" if c in tx_nodes else f"`{c}`" for c in callers[:6])
                 if sql:
                     ncol = len(sql.get("columns", []))
-                    out.append(f"- **{key}** — @{sql.get('kind','?')}（触碰 {ncol} 列）← {callers_str}{tail}")
+                    cut = " ✂" if sql.get("select_pruned") else ""
+                    out.append(f"- **{key}** — @{sql.get('kind','?')}（触碰 {ncol} 列）{cut}← {callers_str}{tail}")
                 else:
                     out.append(f"- **{key}** （列未知，实体未解析）← {callers_str}{tail}")
             out.append("")
