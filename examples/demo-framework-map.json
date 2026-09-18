@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-16T20:29:47",
-    "classes": 25,
+    "generated_at": "2026-09-18T21:32:36",
+    "classes": 26,
     "controllers": 5,
     "mappers": 5,
     "entities": 5,
-    "routes": 39
+    "routes": 44
   },
   "routes": [
     {
@@ -137,6 +137,18 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/stats/openid/local",
+      "controller": "StatsController",
+      "handler": "openidLocal"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stats/openid/local-inline",
+      "controller": "StatsController",
+      "handler": "openidLocalInline"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/stats/orders/sum",
       "controller": "StatsController",
       "handler": "orderSum"
@@ -188,6 +200,24 @@
       "path": "/api/v1/wallet/example-support",
       "controller": "WalletController",
       "handler": "exampleSupport"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/factory-bean",
+      "controller": "WalletController",
+      "handler": "factoryBean"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/factory-field",
+      "controller": "WalletController",
+      "handler": "factoryField"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/wallet/factory-local",
+      "controller": "WalletController",
+      "handler": "factoryLocal"
     },
     {
       "method": "GET",
@@ -915,6 +945,18 @@
               },
               {
                 "method": "GET",
+                "path": "/api/v1/wallet/factory-bean"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/factory-field"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/factory-local"
+              },
+              {
+                "method": "GET",
                 "path": "/api/v1/wallet/local-new"
               },
               {
@@ -1367,6 +1409,22 @@
         "is_db_write": false
       }
     ],
+    "StatsController#openidLocal": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "demoOpenidLocal",
+        "is_db_write": false
+      }
+    ],
+    "StatsController#openidLocalInline": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "demoOpenidLocalInline",
+        "is_db_write": false
+      }
+    ],
     "StatsController#orderSum": [
       {
         "kind": "service",
@@ -1404,6 +1462,22 @@
         "kind": "component",
         "class": "JdbcTemplate",
         "method": "queryForList",
+        "is_db_write": false
+      }
+    ],
+    "StatsService#demoOpenidLocal": [
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "queryForList",
+        "is_db_write": false
+      }
+    ],
+    "StatsService#demoOpenidLocalInline": [
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "queryForObject",
         "is_db_write": false
       }
     ],
@@ -1515,6 +1589,50 @@
         "is_db_write": false
       }
     ],
+    "WalletController#factoryBean": [
+      {
+        "kind": "component",
+        "class": "SupportFactory",
+        "method": "create",
+        "is_db_write": false
+      },
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#factoryField": [
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#factoryLocal": [
+      {
+        "kind": "self",
+        "class": "WalletController",
+        "method": "buildSupport",
+        "is_db_write": false
+      },
+      {
+        "kind": "component",
+        "class": "OrderQuerySupport",
+        "method": "listUsersDirect",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#initMade": [
+      {
+        "kind": "component",
+        "class": "SupportFactory",
+        "method": "create",
+        "is_db_write": false
+      }
+    ],
     "WalletController#localNew": [
       {
         "kind": "component",
@@ -1605,6 +1723,14 @@
     {
       "class": "WalletController",
       "method": "objField",
+      "annotations": [
+        "PostConstruct"
+      ],
+      "file": "src\\main\\java\\com\\demo\\controller\\WalletController.java"
+    },
+    {
+      "class": "WalletController",
+      "method": "factoryField",
       "annotations": [
         "PostConstruct"
       ],
@@ -1960,6 +2086,48 @@
         {
           "method": "GET",
           "path": "/api/v1/stats/openid/cross"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    },
+    {
+      "owner": "StatsService#demoOpenidLocal",
+      "via": "jdbc-template",
+      "kind": "SELECT",
+      "text": "SELECT id, nickname FROM users WHERE openid = 'local-pin'",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.id (User.id)",
+        "users.nickname (User.nickname)",
+        "users.openid (User.openid)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/stats/openid/local"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    },
+    {
+      "owner": "StatsService#demoOpenidLocalInline",
+      "via": "jdbc-template",
+      "kind": "SELECT",
+      "text": "SELECT COUNT(*) AS c FROM users WHERE openid = 'inline-pin'",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.openid (User.openid)"
+      ],
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/stats/openid/local-inline"
         }
       ],
       "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"

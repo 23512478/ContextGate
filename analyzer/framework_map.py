@@ -442,10 +442,45 @@ def _parse_xml_file(path, table_to_entity, entity_by_simple):
 _JDBC_CALL_RE = re.compile(
     r"\b\w*jdbc\w*\s*\.\s*(queryForList|queryForMap|queryForObject|query|update|batchUpdate|execute)\s*\(",
     re.IGNORECASE)
-# 方法内局部 String 变量：String sql = "..." + "..."（JdbcTemplate 常用变量传 SQL）
-_LOCAL_STR_RE = re.compile(
-    r"(?:[;{}]\s*|^\s*)(?:final\s+)?String\s+(\w+)\s*=\s*((?:\"(?:[^\"\\]|\\.)*\"\s*(?:\+\s*)?)+)",
-    re.MULTILINE)
+# 方法内局部 String 变量声明（右值宽松收：字面量/标识符/+ 拼接，切 token 后不动点折叠）
+_LOCAL_STR_DECL_RE = re.compile(
+    r"(?:[;{}]\s*|^\s*)(?:final\s+)?String\s+(\w+)\s*=\s*", re.MULTILINE)
+
+
+def _string_concat_tokens(s, start):
+    """从 s[start] 起取到首个 ';' 的「字面量/标识符 + 号拼接」token 列表。
+    token = ("lit", 文本) | ("id", 标识符，可带点号限定名)。
+    出现方法调用/下标等运行期成分返回 None（静态拿不到，放弃该变量）。"""
+    i, n, tokens, buf, in_str = start, len(s), [], [], False
+    while i < n:
+        ch = s[i]
+        if in_str:
+            if ch == "\\" and i + 1 < n:
+                buf.append(s[i:i + 2])
+                i += 2
+                continue
+            if ch == '"':
+                in_str = False
+                tokens.append(("lit", "".join(buf)))
+                buf = []
+            else:
+                buf.append(ch)
+        elif ch == '"':
+            in_str = True
+            buf = []
+        elif ch == ";":
+            break
+        elif ch == "+":
+            pass  # 拼接符
+        elif not ch.isspace():
+            m = re.match(r"\w+(?:\.\w+)*", s[i:])
+            if not m:
+                return None  # 方法调用/括号等，放弃
+            tokens.append(("id", m.group(0)))
+            i += len(m.group(0))
+            continue
+        i += 1
+    return tokens or None
 # 类级 static String 常量（static final / final static）：JdbcTemplate 常把 SQL 抽成常量字段
 _STATIC_STR_DECL_RE = re.compile(
     r"\b(?:static\s+(?:final\s+)?|final\s+static\s+)String\s+(\w+)\s*=")
@@ -509,18 +544,31 @@ _VERB_SET = {"set"}
 _VERB_SELECT = {"select"}
 
 
-def _leading_concat_strings(s, start):
+def _leading_concat_strings(s, start, id_resolve=None):
     """从 s[start] 开始，提取开头那段「字符串字面量 + 号拼接」拼成的完整字符串。
-    遇到第一个不是字符串/加号/空白的东西就停（说明 SQL 是变量传参，静态拿不到）。"""
+    遇到第一个不是字符串/加号/空白的东西就停（说明 SQL 是变量传参，静态拿不到）。
+    传入 id_resolve 时，标识符片段若能被解析成文本（局部常量/类常量），继续拼接。"""
     i, n, parts = start, len(s), []
     while True:
         mt = re.match(r'\s*"((?:[^"\\]|\\.)*)"', s[i:])
         if not mt:
             mt = re.match(r"\s*\"\"\"(.*?)\"\"\"", s[i:], re.S)  # 文本块
-            if not mt:
+        if mt:
+            parts.append(mt.group(1))
+            i += mt.end()
+        elif id_resolve:
+            mid = re.match(r"\s*([A-Za-z_]\w*(?:\s*\.\s*\w+)*)", s[i:])
+            if mid:
+                txt = id_resolve(mid.group(1).replace(" ", ""))
+                if txt:
+                    parts.append(txt)
+                    i += mid.end()
+                else:
+                    break
+            else:
                 break
-        parts.append(mt.group(1))
-        i += mt.end()
+        else:
+            break
         m2 = re.match(r"\s*\+\s*", s[i:])
         if not m2:
             break
@@ -951,18 +999,57 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                 continue
             owner = f"{c['name']}#{meth['name']}"
 
-            # 局部 String 变量名 -> SQL 文本（String sql = "..." + "..."; 这种写法）
+            # 局部 String 变量名 -> 折叠后的 SQL 文本。
+            # 右值是「字面量/标识符 + 拼接」就收 token：标识符可引用本方法的局部
+            # 常量（定义先后不限，不动点折叠）、本类 static 常量、Other.Const 跨类
+            # 常量；方法调用/参数拼入等运行期成分的变量放弃
+            local_tok = {}
+            for lm in _LOCAL_STR_DECL_RE.finditer(body):
+                toks = _string_concat_tokens(body, lm.end())
+                if toks:
+                    local_tok[lm.group(1)] = toks
             local_str = {}
-            for lm in _LOCAL_STR_RE.finditer(body):
-                start = body.index(lm.group(2).lstrip(), lm.start())
-                txt = _leading_concat_strings(body, start)
-                if txt:
-                    local_str[lm.group(1)] = txt
+            _pending = dict(local_tok)
+            _progress = True
+            while _pending and _progress:
+                _progress = False
+                for lname, toks in list(_pending.items()):
+                    parts, ok = [], True
+                    for kind_, val in toks:
+                        if kind_ == "lit":
+                            parts.append(val)
+                        elif val in local_str:
+                            parts.append(local_str[val])
+                        elif "." in val:
+                            ocls, ofield = val.rsplit(".", 1)
+                            t2 = (by_simple.get(ocls) or {}).get("static_strs", {}).get(ofield)
+                            if t2:
+                                parts.append(t2)
+                            else:
+                                ok = False
+                                break
+                        elif val in c.get("static_strs", {}):
+                            parts.append(c["static_strs"][val])
+                        else:
+                            ok = False
+                            break
+                    if ok:
+                        local_str[lname] = _join_sql_literal(" ".join(parts))
+                        del _pending[lname]
+                        _progress = True
+
+            def _local_id_resolve(name):
+                if name in local_str:
+                    return local_str[name]
+                if "." in name:
+                    ocls, ofield = name.rsplit(".", 1)
+                    return (by_simple.get(ocls) or {}).get("static_strs", {}).get(ofield)
+                return c.get("static_strs", {}).get(name)
 
             # ---- 1) JdbcTemplate 裸 SQL ----
             for jm in _JDBC_CALL_RE.finditer(body):
                 api = jm.group(1).lower()
-                sql = _leading_concat_strings(body, jm.end())
+                sql = _leading_concat_strings(body, jm.end(), _local_id_resolve)
                 if not sql:
                     # 首参不是字面量：局部变量 → 本类 static 常量 → 其他类常量（Foo.SQL_X）
                     arg_m = re.match(r"\s*([\w.]+)\b", body[jm.end():])
@@ -1490,6 +1577,8 @@ def parse_java(path):
 
     # 字段赋值推断：声明为 Object / 泛型 T 的字段（运行期接收者）在方法体里被
     # new X() / getBean(X.class) / (X) ... 赋值时，可静态取到真实类型。
+    # 工厂方法调用（this.f = buildXxx() / this.f = factory.build()）存延迟描述符，
+    # 等 build 阶段 by_simple 建好后按方法签名 ret_type 解析（产品类型写在签名里）。
     # this.f = ... 总是收（可覆盖继承字段）；裸 f = ... 仅限本类声明字段，避免
     # 同名局部变量误收。同一字段多次赋值取最后扫描到的（近似"最后赋值生效"）
     field_assign = {}
@@ -1503,6 +1592,12 @@ def parse_java(path):
               or re.search(r"getBean\s*\(\s*[^;]{0,160}?([A-Z][\w.]*)\s*\.\s*class", rhs))
         if m2:
             field_assign[fname] = simple_type(next(g for g in m2.groups() if g))
+        else:
+            # 工厂方法：recv.method(（recv 可省=本类裸调用）；new/getBean/强转已在上面截走
+            fm2 = re.match(r"\s*(?:([a-z]\w*)\s*\.\s*)?([a-z]\w*)\s*\(", rhs)
+            if fm2:
+                field_assign[fname] = (("call", fm2.group(1), fm2.group(2))
+                                       if fm2.group(1) else ("bare", fm2.group(2)))
 
     # 类级 static String 常量的字符串值：必须在 body_raw 上收（body_clean 里字面量已被抹白）。
     # 右值支持字面量拼接与同类常量互拼（SQL_A + "x"），迭代折叠到不动点；环/未知标识符放弃
@@ -1603,6 +1698,7 @@ def parse_java(path):
                                 simple_type(ccm.group(1)), False))
         # 方法内局部变量类型表：resolve_callees 兜底用（字段表查不到时）。
         # var v = new T() 类型取 new 右值；var v = ctx.getBean(X.class) 类型取 .class 参数；
+        # var v = buildXxx() / factory.build() 存延迟描述符，build 阶段按签名 ret_type 解析；
         # 普通声明取声明类型（右值是什么不重要）
         local_vars = {}
         for lvm in _LOCAL_DECL_RE.finditer(m_body_clean):
@@ -1617,6 +1713,13 @@ def parse_java(path):
                     gm = re.search(r"getBean\s*\(\s*[^;]{0,160}?([\w.]+)\s*\.\s*class", rhs)
                     if gm:
                         local_vars[lvm.group(2)] = simple_type(gm.group(1))
+                    else:
+                        # 工厂方法调用：产品类型写在被调方法签名的 ret_type 里
+                        fm2 = re.match(r"\s*(?:([a-z]\w*)\s*\.\s*)?([a-z]\w*)\s*\(", rhs)
+                        if fm2:
+                            local_vars[lvm.group(2)] = (
+                                ("call", fm2.group(1), fm2.group(2))
+                                if fm2.group(1) else ("bare", fm2.group(2)))
             else:
                 local_vars[lvm.group(2)] = simple_type(lvm.group(1))
         methods.append({
@@ -1742,9 +1845,41 @@ def resolve_callees(target, mname, by_simple, impl_of):
         ext = simple_type(c.get("extends") or "")
         return by_simple.get(ext) if ext else None
 
+    def ret_type_of(cls_name, meth_name):
+        """沿继承链查方法签名的返回类型简单名（工厂方法的产品类型就写在签名里）。
+        接口本身也在 by_simple（接口方法声明有 ret_type），直接命中即可。"""
+        c2 = by_simple.get(cls_name)
+        chain = []
+        while c2 is not None and c2 not in chain:
+            chain.append(c2)
+            c2 = parent_of(c2)
+        for cc in chain:
+            mm = next((x for x in cc["methods"] if x["name"] == meth_name), None)
+            if mm and mm.get("ret_type"):
+                return simple_type(mm["ret_type"])
+        return None
+
+    def resolve_local_desc(desc, cls=None):
+        """解析工厂方法延迟描述符 → 接收者类型：
+        ("bare", "build")      本类（或 cls）工厂方法，ret_type 即产品类型
+        ("call", "f", "build") f 的类型先解析，再查其 build 签名的 ret_type
+        描述符可能嵌套（recv 也是 var 工厂产物），递归自然限深一层。"""
+        if not isinstance(desc, tuple):
+            return desc
+        owner = cls or target
+        if desc[0] == "bare":
+            return ret_type_of(owner["name"], desc[1])
+        _, recv, meth = desc
+        rtype = field_type_of(owner, recv)
+        if not rtype:
+            lv = local_vars.get(recv)
+            rtype = resolve_local_desc(lv, owner) if isinstance(lv, tuple) else lv
+        return ret_type_of(rtype, meth) if rtype else None
+
     def field_type_of(cls, fname):
         """沿继承链解析字段接收者类型：
-        1. 赋值推断优先——this.f = new X() / getBean(X.class) / (X) ... 给了运行期真实类型
+        1. 赋值推断优先——this.f = new X() / getBean(X.class) / (X) ... / 工厂方法调用
+           给了运行期真实类型（工厂描述符按签名 ret_type 延迟解析）
         2. 声明类型兜底——Object / 单字母泛型 T 运行期才能确定，视为未解析
         返回 None 表示类型不可知（调用点不产边，宁缺毋滥）"""
         chain, c = [], cls
@@ -1754,12 +1889,17 @@ def resolve_callees(target, mname, by_simple, impl_of):
         for c2 in chain:
             a = (c2.get("field_assign") or {}).get(fname)
             if a:
-                return a
+                return resolve_local_desc(a, c2) if isinstance(a, tuple) else a
         for c2 in chain:
             t = (c2.get("fields") or {}).get(fname)
             if t and t != "Object" and not re.fullmatch(r"[A-Z]", t):
                 return t
         return None
+
+    def local_type(name):
+        """局部变量类型：直接类型字符串，或工厂方法描述符延迟解析"""
+        v = local_vars.get(name)
+        return resolve_local_desc(v) if isinstance(v, tuple) else v
 
     for field, cmethod in method["calls"]:
         if field == "this":
@@ -1772,7 +1912,7 @@ def resolve_callees(target, mname, by_simple, impl_of):
         if ftype:
             emit(ftype, cmethod, True)
             continue
-        ltype = local_vars.get(field)
+        ltype = local_type(field)
         if ltype and local_type_ok(ltype):
             emit(ltype, cmethod, True)
         # 都查不到：静态调用/运行期才解析的接收者，不追
@@ -1788,7 +1928,7 @@ def resolve_callees(target, mname, by_simple, impl_of):
             m0 = next((m2 for m2 in target["methods"] if m2["name"] == root), None)
             t = simple_type(m0["ret_type"]) if m0 and m0.get("ret_type") else None
         else:
-            t = field_type_of(target, root) or local_vars.get(root)
+            t = field_type_of(target, root) or local_type(root)
         for gname, gargs in getters:
             if t is None:
                 break

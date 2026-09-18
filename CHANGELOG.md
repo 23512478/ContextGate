@@ -4,14 +4,16 @@
 
 ## [未发布]
 
+- **工厂方法返回值接收者解析**：`var svc = buildXxx()` 与字段赋值 `this.f = buildXxx()` / `this.f = factory.build()` 旧版归为"运行期接收者不追"，实际上产品类型就写在被调方法签名的 `ret_type` 里——parse 阶段存延迟描述符，build 阶段沿继承链查签名解析（recv 为字段/局部变量时先解析 recv 类型，支持一层嵌套）；`var svc = factory.build()` 形态同步接通
+- **JdbcTemplate 方法内局部 String 单赋值传播**：`final String w = " WHERE ..."; String sql = "SELECT ..." + w` 旧版只收纯字面量右值，引用局部片段的变量整块丢失；现在右值切 token（字面量/标识符/+）后不动点折叠，片段定义先后不限，可引用本方法局部常量、本类 static 常量、`Other.Const` 跨类常量；jdbc 首参直接 `"..." + w` 的内联拼接也续拼，不再留半截 SQL。仍不追：右值含方法参数/方法调用等真运行期成分
 - **Wrapper `.select()` 列裁剪**：MP 内置行读取（`selectList` 等）的保守"全列"记录，在消费点的 Wrapper 链静态可见且带显式 `.select(...)` 时收窄为实际触碰列——要求该消费点的每个调用方都可见，有看不见的宁可保守不裁；count 族 0 列与写操作全表写语义不变。impact 里裁剪过的调用点带 ✂ 标记，裁剪后的真实 SQL 可被 `find_sql` 反查（旧版占位文本不参与反查）
 - **getter 带参的链式中转**：链式中间节放宽为可带参（`getService(userId).list()`），参数不影响返回类型解析；根节点支持字段/局部变量和本类裸调用（`getSelf().getService(x).tail()`）两种形态
-- **运行期接收者解析**：`ctx.getBean(X.class).m()` 类型从 `.class` 参数取（`var v = ctx.getBean(X.class)` 同理）；`Object`/泛型 `T` 字段在本类或子类方法体里被 `new X()` / `getBean(X.class)` / `(X) ...` 赋值时按赋值推断真实类型（沿继承链查找）；`((X) helper).m()` 强转类型即接收者类型；`getBean` 调用本身不再产生噪音边。仍不追：工厂方法返回值接收者、纯泛型绑定无赋值线索
+- **运行期接收者解析**：`ctx.getBean(X.class).m()` 类型从 `.class` 参数取（`var v = ctx.getBean(X.class)` 同理）；`Object`/泛型 `T` 字段在本类或子类方法体里被 `new X()` / `getBean(X.class)` / `(X) ...` 赋值时按赋值推断真实类型（沿继承链查找）；`((X) helper).m()` 强转类型即接收者类型；`getBean` 调用本身不再产生噪音边。（工厂方法返回值赋值当时仍不追，已在后续条目还清）
 - **Example 参数多跳传播**：Example 作方法参数转传（A 拼 → B 拼 → C 消费）沿调用链不动点接力，条件跨跳不丢（旧版只追一跳）；种子按语句集合单调增长收敛，互传/自环不死循环。demo 实测 Controller → 中转层 → 终点两层条件都进终点合成 SQL：`WHERE (nickname = ?) AND (create_time > ?)`
   - 修复顺带：传播种子语句改用 `;\n` 拼接（旧版 `\n` 会让整块种子被当成一条语句，criteria 分组语义塌缩、条件挤进同一组）
 - **链式返回值接收者解析**：`a.getService().listUsers()` 的尾方法旧版完全收不到（recv 位置是 `)`）；现在中间节为无参 getter 时按方法签名 `ret_type` 逐节解析类型，尾方法接入调用链
 - **方法内局部对象接收者**：`XxxService s = new XxxService()` 与 `var s = new XxxService()` 建方法级局部变量类型表，字段表查不到时兜底（旧版注释写着"MVP 不追"）；实体/Example 类型的局部调用不产边（噪音过滤）
-- demo 夹具新增 10 条路由（`example-relay` / `chain-call` / `local-new` / `local-var` / `chain-arg` / `bean-chain` / `bean-var` / `obj-field` / `obj-cast` / `sel-prune`），断言 7.38-7.43
+- demo 夹具新增 15 条路由（`example-relay` / `chain-call` / `local-new` / `local-var` / `chain-arg` / `bean-chain` / `bean-var` / `obj-field` / `obj-cast` / `sel-prune` / `factory-local` / `factory-bean` / `factory-field` / `openid/local` / `openid/local-inline`），断言 7.38-7.45
 
 ## [v0.2.0] — 2026-09-08
 

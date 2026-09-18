@@ -411,6 +411,26 @@ def main():
         assert "selectById" in out_ocast, \
             "((X) helper).m() 强转调用：强转类型即接收者类型"
 
+        # 7.44 工厂方法返回值接收者：var f = buildXxx() / factory.build() / 字段工厂赋值
+        out_flocal = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/factory-local"})
+        assert "listUsersDirect" in out_flocal and "selectById" in out_flocal, \
+            "var svc = buildSupport()：本类工厂方法产品类型应从签名 ret_type 取"
+        out_fbean = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/factory-bean"})
+        assert "SupportFactory" in out_fbean and "listUsersDirect" in out_fbean \
+            and "selectById" in out_fbean, \
+            "var svc = supportFactory.create()：recv 类型 + create 的 ret_type 逐节解析"
+        out_ffield = call_tool(proc, "trace_call", {"query": "GET /api/v1/wallet/factory-field"})
+        assert "listUsersDirect" in out_ffield and "selectById" in out_ffield, \
+            "made = supportFactory.create() 字段赋值：工厂描述符应延迟解析出产品类型"
+
+        # 7.45 JdbcTemplate 局部 String 单赋值传播：方法内 final 片段折叠进完整 SQL
+        out_local_sql = call_tool(proc, "find_sql", {"query": "demoOpenidLocal"})
+        assert "SELECT id, nickname FROM users WHERE openid = 'local-pin'" in out_local_sql, \
+            "局部 final String 片段（cols/tail）应不动点折叠进 sql 变量的完整 SQL"
+        out_inline_sql = call_tool(proc, "find_sql", {"query": "demoOpenidLocalInline"})
+        assert "SELECT COUNT(*) AS c FROM users WHERE openid = 'inline-pin'" in out_inline_sql, \
+            "jdbc 首参直接 \"...\" + 局部常量 时应内联续拼，不留半截 SQL"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

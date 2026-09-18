@@ -41,4 +41,14 @@ public class StatsController {
     public List<Map<String, Object>> openidDetail() {
         return statsService.demoOpenidDetail();
     }
+
+    @GetMapping("/stats/openid/local")
+    public List<Map<String, Object>> openidLocal() {
+        return statsService.demoOpenidLocal();
+    }
+
+    @GetMapping("/stats/openid/local-inline")
+    public Long openidLocalInline() {
+        return statsService.demoOpenidLocalInline();
+    }
 }

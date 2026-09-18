@@ -125,9 +125,9 @@ python mcp-server/test_mcp.py
 
 - **正则级解析，不是真 Java AST**：复杂语法（内部类、Lombok 生成方法等）可能漏，遇到再补规则
 - **MyBatis-Plus 内置方法：行读取标全列、count 族标 0 列**——`selectById`/`selectList` 底层就是取整行，标"触碰全部列"是语义事实而非近似；`selectCount`/`count`/`exists`/`countByExample` 是 COUNT，不触碰业务列。例外：消费点的 Wrapper 链静态可见且带显式 `.select(...)` 时，全列收窄为实际 select 列（impact 里带 ✂ 标记）；要求该消费点的每个调用方都可见，有看不见的宁可保守不裁
-- **Wrapper 跨语句/跨方法/跨类**：定义/续链/消费点分离、if/for 分支内续链（保守计入，宁多报不漏）、拷贝别名（`w2 = w`）、Wrapper 作方法参数、本类/跨类 helper 构建（`lqw = buildXxx(...)` / `lqw = Other.buildXxx(...)`，含 helper 套 helper）都可解析；调用方拼的条件经参数传播归并，**沿调用链不动点收敛——多跳、跨类可追**（实测 Controller → Service A → Service B → Mapper 三跳，条件不丢）。前提：每跳目标方法有方法体、接收者类型可解析（注入字段、类名、方法内 `new`/`var` 局部变量、链式返回值均可——中转 getter 可带参，根可为字段或本类裸调用）；仍不追的：运行期拼出来的接收者（工厂方法返回值、纯泛型绑定无赋值线索）
-- **运行期接收者的降级解析**：`ctx.getBean(X.class).m()` 类型从 `.class` 参数取（`var v = ctx.getBean(X.class)` 同理）；声明为 `Object`/泛型 `T` 的字段若在本类（或子类）方法体里被 `new X()` / `getBean(X.class)` / `(X) ...` 赋值，按赋值推断真实类型；`((X) helper).m()` 强转类型即接收者类型。`getBean` 本身不再产生噪音边。仍不追的：赋值是工厂方法调用（`f = buildXxx()`）、纯泛型绑定（子类只是 `extends Base<T>` 却从不赋值）
-- **SQL 常量支持字面量拼接、同类互拼折叠与跨类互拼**（`SQL_A = "..." + Other.SQL_B`，全局不动点折叠）；运行期拼参（`"..." + variable`）静态拿不到
+- **Wrapper 跨语句/跨方法/跨类**：定义/续链/消费点分离、if/for 分支内续链（保守计入，宁多报不漏）、拷贝别名（`w2 = w`）、Wrapper 作方法参数、本类/跨类 helper 构建（`lqw = buildXxx(...)` / `lqw = Other.buildXxx(...)`，含 helper 套 helper）都可解析；调用方拼的条件经参数传播归并，**沿调用链不动点收敛——多跳、跨类可追**（实测 Controller → Service A → Service B → Mapper 三跳，条件不丢）。前提：每跳目标方法有方法体、接收者类型可解析（注入字段、类名、方法内 `new`/`var` 局部变量、链式返回值均可——中转 getter 可带参，根可为字段或本类裸调用）；仍不追的：纯泛型绑定无赋值线索（子类只是 `extends Base<T>` 却从不赋值）
+- **运行期接收者的降级解析**：`ctx.getBean(X.class).m()` 类型从 `.class` 参数取（`var v = ctx.getBean(X.class)` 同理）；声明为 `Object`/泛型 `T` 的字段若在本类（或子类）方法体里被 `new X()` / `getBean(X.class)` / `(X) ...` / **工厂方法调用**（`f = buildXxx()` / `f = factory.build()`，产品类型取被调方法签名的 `ret_type`，沿继承链查）赋值，按赋值推断真实类型；`var svc = buildXxx()` / `var svc = factory.build()` 局部变量同理；`((X) helper).m()` 强转类型即接收者类型。`getBean` 本身不再产生噪音边。仍不追的：纯泛型绑定（子类只是 `extends Base<T>` 却从不赋值）
+- **SQL 常量支持字面量拼接、同类互拼折叠与跨类互拼**（`SQL_A = "..." + Other.SQL_B`，全局不动点折叠）；**方法内局部 `final String`（及单赋值 String）片段同样折叠**——`final String w = " WHERE ..."; String sql = "SELECT ..." + w` 与 jdbc 首参直接 `"..." + w` 都能还原全文（定义先后不限，不动点收敛）；仍拿不到：右值拼入方法参数/方法返回值等真运行期值（`"..." + variable` 且 variable 静态不可知）
 - **MBG `Example` 动态条件**：criteria 分组语义已还原——`createCriteria()` 开 AND 组、`or()` 开 OR 组（含 `example.or().andXxx()` 匿名组），多组时带括号、组间按连接词连接；Example 作方法参数传入时调用方条件经传播归并（方法名不限，按 Example 参数类型识别；与 Wrapper 一样沿调用链多跳传播，互传/自环有收敛防护）
 
 ## 参与进来
@@ -137,7 +137,7 @@ python mcp-server/test_mcp.py
 三种参与方式，按难度排序：
 
 1. **拿你的项目跑一把，报漏报**（最有价值）：`python analyzer/framework_map.py <你的项目>`，对照 `framework_map.md` 找"这条链路/这个字段明明用了却没出现"的地方，提 issue 附一小段 Java/XML 源码即可。
-2. **补解析规则**：排队中的规则见上文「已知边界」里各条"仍不追的"（如工厂方法返回值接收者、纯泛型绑定）。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
+2. **补解析规则**：排队中的规则见上文「已知边界」里各条"仍不追的"（如纯泛型绑定无赋值线索、真运行期拼参）。方法见 [CONTRIBUTING.md](CONTRIBUTING.md)，流程是"demo 夹具 + 断言 + 全绿"。
 3. **适配更多 AI 工具 / 语言**：MCP 是标准协议，接入新工具基本零成本；分析器目前只覆盖 Java 侧。
 
 ## License

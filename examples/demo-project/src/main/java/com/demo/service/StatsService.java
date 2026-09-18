@@ -61,6 +61,21 @@ public class StatsService {
         return jdbcTemplate.queryForList(SQL_OPENID_CROSS);
     }
 
+    /** 局部 String 单赋值传播：片段都是方法内 final String，折叠成完整 SQL（定义先后不限）。 */
+    public List<Map<String, Object>> demoOpenidLocal() {
+        final String tail = " WHERE openid = 'local-pin'";
+        String cols = "id, nickname";
+        String sql = "SELECT " + cols + " FROM users" + tail;
+        return jdbcTemplate.queryForList(sql);
+    }
+
+    /** 局部常量内联进字面量拼接：jdbc 首参直接 "..." + where（不经中间 sql 变量）。 */
+    public Long demoOpenidLocalInline() {
+        final String where = " WHERE openid = 'inline-pin'";
+        return jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) AS c FROM users" + where, Long.class);
+    }
+
     /** Example 多跳传播的终点：自己不拼条件，只消费透传进来的 Example。 */
     public List<com.demo.entity.User> searchByRelay(UserExample example) {
         return userMapper.selectByExample(example);

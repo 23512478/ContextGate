@@ -3,6 +3,7 @@ package com.demo.controller;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.entity.User;
 import com.demo.service.OrderQuerySupport;
+import com.demo.service.SupportFactory;
 import com.demo.entity.UserExample;
 import com.demo.mapper.UserMapper;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -27,6 +28,12 @@ public class WalletController {
 
     /** Object 字段：类型运行期才能确定（initHelper 里 new 赋值）。 */
     private Object helper;
+
+    @Autowired
+    private SupportFactory supportFactory;
+
+    /** Object 字段：工厂方法赋值（made = supportFactory.create()，按签名 ret_type 推断）。 */
+    private Object made;
 
     /** 充值：自定义 @Update 写 wallet_balance。 */
     @PostMapping("/wallet/recharge")
@@ -143,5 +150,35 @@ public class WalletController {
         w.select(User::getId, User::getNickname);
         w.eq(User::getId, userId);
         return userMapper.selectList(w);
+    }
+
+    /** 工厂方法返回值（本类裸调用）：var svc = buildSupport()，产品类型取本类方法签名。 */
+    @GetMapping("/wallet/factory-local")
+    public User factoryLocal(@RequestParam Long userId) {
+        var svc = buildSupport();
+        return svc.listUsersDirect(userId);
+    }
+
+    /** 工厂方法返回值（跨类）：var svc = supportFactory.create()，recv 类型→create 的 ret_type。 */
+    @GetMapping("/wallet/factory-bean")
+    public User factoryBean(@RequestParam Long userId) {
+        var svc = supportFactory.create();
+        return svc.listUsersDirect(userId);
+    }
+
+    /** 工厂方法返回值（字段赋值）：made 在 @PostConstruct 里被工厂方法赋值。 */
+    @GetMapping("/wallet/factory-field")
+    public User factoryField(@RequestParam Long userId) {
+        return made.listUsersDirect(userId);
+    }
+
+    /** 本类工厂方法：返回类型写在签名上，和方法体/参数无关。 */
+    private OrderQuerySupport buildSupport() {
+        return new OrderQuerySupport();
+    }
+
+    @org.springframework.beans.factory.annotation.PostConstruct
+    public void initMade() {
+        made = supportFactory.create();
     }
 }

@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-16 20:29:47
-- 扫描类: 25 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 39 条 | 调用图边: 63 个方法
+- 生成时间: 2026-09-18 21:32:36
+- 扫描类: 26 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 44 条 | 调用图边: 71 个方法
 
 ---
 
@@ -101,6 +101,16 @@
    └─ StatsService#demoOpenidDetail
       ├─ JdbcTemplate#queryForList  （组件/工具）
 
+### `GET /api/v1/stats/openid/local`
+**StatsController#openidLocal**
+   └─ StatsService#demoOpenidLocal
+      ├─ JdbcTemplate#queryForList  （组件/工具）
+
+### `GET /api/v1/stats/openid/local-inline`
+**StatsController#openidLocalInline**
+   └─ StatsService#demoOpenidLocalInline
+      ├─ JdbcTemplate#queryForObject  （组件/工具）
+
 ### `GET /api/v1/stats/orders/sum`
 **StatsController#orderSum**
    └─ StatsService#orderAmountSum
@@ -140,6 +150,20 @@
 ### `GET /api/v1/wallet/example-support`
 **WalletController#exampleSupport**
    ├─ OrderQuerySupport#searchByExample  （组件/工具）
+
+### `GET /api/v1/wallet/factory-bean`
+**WalletController#factoryBean**
+   ├─ SupportFactory#create  （组件/工具）
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
+
+### `GET /api/v1/wallet/factory-field`
+**WalletController#factoryField**  [隐藏入口: PostConstruct]
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
+
+### `GET /api/v1/wallet/factory-local`
+**WalletController#factoryLocal**
+   └─ WalletController#buildSupport
+   ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
 
 ### `GET /api/v1/wallet/lambda`
 **WalletController#byLambda**
@@ -344,6 +368,7 @@ UserMapper#selectById
 
 - `PostConstruct` → DemoDataInitializer#initDemoData  (`src\main\java\com\demo\config\DemoDataInitializer.java`)
 - `PostConstruct` → WalletController#objField  (`src\main\java\com\demo\controller\WalletController.java`)
+- `PostConstruct` → WalletController#factoryField  (`src\main\java\com\demo\controller\WalletController.java`)
 
 ---
 
@@ -412,6 +437,14 @@ UserMapper#selectById
   - `SELECT id, nickname FROM users WHERE openid = 'demo-openid'`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/stats/openid/cross`
+- **StatsService#demoOpenidLocal** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT id, nickname FROM users WHERE openid = 'local-pin'`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/stats/openid/local`
+- **StatsService#demoOpenidLocalInline** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT COUNT(*) AS c FROM users WHERE openid = 'inline-pin'`
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/stats/openid/local-inline`
 - **ProductServiceImpl#findByIdField** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\impl\ProductServiceImpl.java`)
   - `SELECT * FROM product WHERE id = ?`
   - 涉及表: `product`
