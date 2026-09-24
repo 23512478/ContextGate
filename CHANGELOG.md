@@ -2,10 +2,13 @@
 
 本仓库的所有重要变更都会记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [v0.2.1] — 2026-09-24
 
+- **自定义泛型基类的具体绑定（不再只硬编码 ServiceImpl）**：子类 `extends AbstractBase<OrderMapper, Order>`、方法体全声明在泛型基类里（`protected M mapper; T getX(){ mapper.selectById(...) }`）旧版完全断链——绑定按 `(声明类, 形参)` 二元 key 沿继承链折叠，多层泛型透传（`Mid<T> extends AbstractBase<OrderMapper, T>` → `XxxService extends Mid<Order>`）、字段类型 `M`、签名返回 `T`、self 裸调继承方法（调用图补建继承节点，不动点扩到收敛）都能接到具体 Mapper；Mapper 侧 `SuperMapper<T> extends BaseMapper<T>` 式接口链也折。`ServiceImpl<M,T>`/`BaseManager<M,T>` 三处正则特判改为读统一的折叠结果（直接继承和中间夹自定义基类等价）。真没给实参的纯形参（`extends Base<T>` 到头）仍诚实不追
+- **真运行期拼参：保留 SQL 骨架，未知值降级 `?`**：JdbcTemplate 拼了方法参数（`"... WHERE id = " + userId`）或方法调用返回值（`"... " + user.getId()`）旧版整块 SQL 直接丢弃；新扫描器把字面量/可解析常量照拼，不可解析片段、调用括号、三元等成分统一折成 `?`（相邻 `?` 合并，括号平衡跳过），骨架上的关键字校验/表归因/列归因照常；拼进局部 String 变量再整变量传参的形态同样收，运行期标记随变量继承。记录新增 `has_runtime_param`，markdown 与 MCP 三处渲染（trace_call/find_sql/impact）提示"含运行期拼参"。`?` 位置上的值本身仍不可知
+- demo 夹具新增 4 条路由（`orders/generic-detail` 自定义泛型基类两层折叠、`stats/runtime/inline`、`stats/runtime/call`、`stats/runtime/var` 三种运行期拼参），OrderMapper 改走 `SuperMapper<Order>` 接口链；断言 7.46-7.50
 - **工厂方法返回值接收者解析**：`var svc = buildXxx()` 与字段赋值 `this.f = buildXxx()` / `this.f = factory.build()` 旧版归为"运行期接收者不追"，实际上产品类型就写在被调方法签名的 `ret_type` 里——parse 阶段存延迟描述符，build 阶段沿继承链查签名解析（recv 为字段/局部变量时先解析 recv 类型，支持一层嵌套）；`var svc = factory.build()` 形态同步接通
-- **JdbcTemplate 方法内局部 String 单赋值传播**：`final String w = " WHERE ..."; String sql = "SELECT ..." + w` 旧版只收纯字面量右值，引用局部片段的变量整块丢失；现在右值切 token（字面量/标识符/+）后不动点折叠，片段定义先后不限，可引用本方法局部常量、本类 static 常量、`Other.Const` 跨类常量；jdbc 首参直接 `"..." + w` 的内联拼接也续拼，不再留半截 SQL。仍不追：右值含方法参数/方法调用等真运行期成分
+- **JdbcTemplate 方法内局部 String 单赋值传播**：`final String w = " WHERE ..."; String sql = "SELECT ..." + w` 旧版只收纯字面量右值，引用局部片段的变量整块丢失；现在右值切 token（字面量/标识符/+）后不动点折叠，片段定义先后不限，可引用本方法局部常量、本类 static 常量、`Other.Const` 跨类常量；jdbc 首参直接 `"..." + w` 的内联拼接也续拼，不再留半截 SQL。当时仍不追右值含方法参数/方法调用等真运行期成分（已在后续「真运行期拼参」条目还清）
 - **Wrapper `.select()` 列裁剪**：MP 内置行读取（`selectList` 等）的保守"全列"记录，在消费点的 Wrapper 链静态可见且带显式 `.select(...)` 时收窄为实际触碰列——要求该消费点的每个调用方都可见，有看不见的宁可保守不裁；count 族 0 列与写操作全表写语义不变。impact 里裁剪过的调用点带 ✂ 标记，裁剪后的真实 SQL 可被 `find_sql` 反查（旧版占位文本不参与反查）
 - **getter 带参的链式中转**：链式中间节放宽为可带参（`getService(userId).list()`），参数不影响返回类型解析；根节点支持字段/局部变量和本类裸调用（`getSelf().getService(x).tail()`）两种形态
 - **运行期接收者解析**：`ctx.getBean(X.class).m()` 类型从 `.class` 参数取（`var v = ctx.getBean(X.class)` 同理）；`Object`/泛型 `T` 字段在本类或子类方法体里被 `new X()` / `getBean(X.class)` / `(X) ...` 赋值时按赋值推断真实类型（沿继承链查找）；`((X) helper).m()` 强转类型即接收者类型；`getBean` 调用本身不再产生噪音边。（工厂方法返回值赋值当时仍不追，已在后续条目还清）

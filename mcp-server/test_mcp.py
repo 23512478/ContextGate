@@ -431,6 +431,58 @@ def main():
         assert "SELECT COUNT(*) AS c FROM users WHERE openid = 'inline-pin'" in out_inline_sql, \
             "jdbc 首参直接 \"...\" + 局部常量 时应内联续拼，不留半截 SQL"
 
+        # 7.46 自定义泛型基类（非 ServiceImpl）：M/T 沿多层泛型继承折叠
+        # GenericOrderService(无自有方法) extends MidOrderService<Order>
+        #   extends AbstractEntityService<OrderMapper, T>，路由调 midGet
+        # 要穿过 self 继承节点，最终接到 OrderMapper#selectById
+        print("\n" + "=" * 70)
+        print("### trace_call('GET /api/v1/orders/generic-detail')  ← 自定义泛型基类继承链")
+        print("-" * 70)
+        out_generic = call_tool(proc, "trace_call",
+                                {"query": "GET /api/v1/orders/generic-detail"})
+        print(out_generic)
+        assert "GenericOrderService#midGet" in out_generic, \
+            "具体子类无自有方法：继承来的 midGet 节点应靠继承解析补建"
+        assert "GenericOrderService#genericGetById" in out_generic, \
+            "midGet 裸调基类 genericGetById：self 边要跨泛型层接通"
+        assert "OrderMapper#selectById" in out_generic, \
+            "M 字段（protected M mapper）沿两层泛型继承折叠后应接到 OrderMapper#selectById"
+
+        # 7.47 Mapper 泛型经自定义泛型 Mapper 接口链折叠：
+        # OrderMapper 现在 extends SuperMapper<Order>（不再直接 BaseMapper<Order>），
+        # 实体归因仍得是 Order——impact 应能看到泛型基类那两个调用点
+        out_imp_order = call_tool(proc, "impact", {"entity": "Order"})
+        assert "GenericOrderService#genericGetById" in out_imp_order, \
+            "SuperMapper<T> 接口链折叠出实体 Order 后，泛型调用点应计入 Order 影响面"
+
+        # 7.48 真运行期拼参①：方法参数直接内联，骨架保留 + ? 占位 + 表/列归因 + 提示
+        print("\n" + "=" * 70)
+        print("### find_sql('runtimeConcatInline')  ← 方法参数拼进 SQL，降级 ? 占位")
+        print("-" * 70)
+        out_rt_inline = call_tool(proc, "find_sql", {"query": "runtimeConcatInline"})
+        print(out_rt_inline)
+        assert "SELECT id, nickname FROM users WHERE id = ?" in out_rt_inline, \
+            "拼了静态不可知的方法参数：SQL 骨架必须保留，未知值降级为 ?"
+        assert "users.id (User.id)" in out_rt_inline and "users.nickname (User.nickname)" \
+            in out_rt_inline, "? 占位不影响表/列归因"
+        assert "运行期拼参" in out_rt_inline, "has_runtime_param 记录应渲染出提示"
+
+        # 7.49 真运行期拼参②：方法调用返回值（normalize(userId)）同样降级 ?
+        out_rt_call = call_tool(proc, "find_sql", {"query": "runtimeConcatCall"})
+        assert "SELECT id, nickname FROM users WHERE id = ?" in out_rt_call, \
+            "方法调用返回值拼进 SQL：括号整体平衡跳过，值降级为 ?，骨架保留"
+
+        # 7.50 真运行期拼参③：先拼进局部 sql 变量再整变量传参，标记随变量继承
+        out_rt_var = call_tool(proc, "find_sql", {"query": "runtimeConcatVar"})
+        assert "SELECT id, nickname FROM users WHERE id = ?" in out_rt_var, \
+            "局部变量折叠遇运行期成分不再整块丢弃：变量传参路径也要拿到骨架"
+        assert "运行期拼参" in out_rt_var, "变量路径应继承 has_runtime_param 标记"
+        # trace_call 视图也要看到骨架和提示
+        out_rt_trace = call_tool(proc, "trace_call",
+                                 {"query": "GET /api/v1/stats/runtime/inline"})
+        assert "WHERE id = ?" in out_rt_trace and "运行期拼参" in out_rt_trace, \
+            "trace_call 行内 SQL 渲染也要带 ? 骨架与运行期提示"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

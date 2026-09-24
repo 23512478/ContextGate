@@ -7,7 +7,7 @@ import org.apache.ibatis.annotations.Select;
 import java.util.Map;
 
 @Mapper
-public interface OrderMapper extends BaseMapper<Order> {
+public interface OrderMapper extends SuperMapper<Order> {
 
     // 别名星号 o.* + JOIN 读 u.nickname：覆盖别名星号展开 + 跨表列归属
     @Select("SELECT o.*, u.nickname AS user_name FROM orders o "

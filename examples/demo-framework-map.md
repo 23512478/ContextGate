@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-18 21:32:36
-- 扫描类: 26 个 | Controller: 5 个 | Mapper: 5 个 | 实体: 5 个 | HTTP 路由: 44 条 | 调用图边: 71 个方法
+- 生成时间: 2026-09-24 21:09:13
+- 扫描类: 30 个 | Controller: 5 个 | Mapper: 6 个 | 实体: 5 个 | HTTP 路由: 48 条 | 调用图边: 82 个方法
 
 ---
 
@@ -39,6 +39,12 @@
 ### `POST /api/v1/orders`
 **OrderController#create**
    ├─ OrderServiceImpl#create  （组件/工具）
+
+### `GET /api/v1/orders/generic-detail`
+**OrderController#genericDetail**
+   └─ GenericOrderService#midGet
+      └─ GenericOrderService#genericGetById
+         ├─ OrderMapper#selectById  （MP 内置）
 
 ### `GET /api/v1/orders/my`
 **OrderController#listMy**
@@ -114,6 +120,22 @@
 ### `GET /api/v1/stats/orders/sum`
 **StatsController#orderSum**
    └─ StatsService#orderAmountSum
+      ├─ JdbcTemplate#queryForMap  （组件/工具）
+
+### `GET /api/v1/stats/runtime/call`
+**StatsController#runtimeCall**
+   └─ StatsService#runtimeConcatCall
+      └─ StatsService#normalize
+      ├─ JdbcTemplate#queryForList  （组件/工具）
+
+### `GET /api/v1/stats/runtime/inline`
+**StatsController#runtimeInline**
+   └─ StatsService#runtimeConcatInline
+      ├─ JdbcTemplate#queryForList  （组件/工具）
+
+### `GET /api/v1/stats/runtime/var`
+**StatsController#runtimeVar**
+   └─ StatsService#runtimeConcatVar
       ├─ JdbcTemplate#queryForMap  （组件/工具）
 
 ### `GET /api/v1/stats/wallets/top`
@@ -445,6 +467,21 @@ UserMapper#selectById
   - `SELECT COUNT(*) AS c FROM users WHERE openid = 'inline-pin'`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/stats/openid/local-inline`
+- **StatsService#runtimeConcatInline** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT id, nickname FROM users WHERE id = ?`
+  - ⚠️ 含运行期拼参（`?` 为静态不可知值，值本身拿不到；表/列归因仍有效）
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/stats/runtime/inline`
+- **StatsService#runtimeConcatCall** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT id, nickname FROM users WHERE id = ?`
+  - ⚠️ 含运行期拼参（`?` 为静态不可知值，值本身拿不到；表/列归因仍有效）
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/stats/runtime/call`
+- **StatsService#runtimeConcatVar** — @SELECT（JdbcTemplate）  (`src\main\java\com\demo\service\StatsService.java`)
+  - `SELECT id, nickname FROM users WHERE id = ?`
+  - ⚠️ 含运行期拼参（`?` 为静态不可知值，值本身拿不到；表/列归因仍有效）
+  - 涉及表: `users`
+  - 上游路由: `GET /api/v1/stats/runtime/var`
 - **ProductServiceImpl#findByIdField** — @SELECT（MP Wrapper）  (`src\main\java\com\demo\service\impl\ProductServiceImpl.java`)
   - `SELECT * FROM product WHERE id = ?`
   - 涉及表: `product`

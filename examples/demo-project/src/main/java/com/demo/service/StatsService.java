@@ -76,6 +76,29 @@ public class StatsService {
                 "SELECT COUNT(*) AS c FROM users" + where, Long.class);
     }
 
+    /** 真运行期拼参①：方法参数直接内联拼进 SQL（静态拿不到值，旧版整块丢弃）。
+     *  新版保留骨架 "WHERE id = ?"，users/id/nickname 归因照常。 */
+    public List<Map<String, Object>> runtimeConcatInline(Long userId) {
+        return jdbcTemplate.queryForList(
+                "SELECT id, nickname FROM users WHERE id = " + userId);
+    }
+
+    /** 真运行期拼参②：拼的是方法调用返回值（静态同样拿不到）。 */
+    public List<Map<String, Object>> runtimeConcatCall(Long userId) {
+        return jdbcTemplate.queryForList(
+                "SELECT id, nickname FROM users WHERE id = " + normalize(userId));
+    }
+
+    /** 真运行期拼参③：运行期成分先拼进局部 sql 变量，再整变量传给 jdbc。 */
+    public Map<String, Object> runtimeConcatVar(Long userId) {
+        String sql = "SELECT id, nickname FROM users WHERE id = " + userId;
+        return jdbcTemplate.queryForMap(sql);
+    }
+
+    private Long normalize(Long userId) {
+        return userId;
+    }
+
     /** Example 多跳传播的终点：自己不拼条件，只消费透传进来的 Example。 */
     public List<com.demo.entity.User> searchByRelay(UserExample example) {
         return userMapper.selectByExample(example);

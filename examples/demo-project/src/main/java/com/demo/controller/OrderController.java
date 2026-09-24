@@ -2,6 +2,7 @@ package com.demo.controller;
 
 import com.demo.entity.Order;
 import com.demo.service.OrderServiceImpl;
+import com.demo.service.impl.GenericOrderService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,6 +16,9 @@ public class OrderController {
 
     @Autowired
     private OrderServiceImpl orderService;
+
+    @Autowired
+    private GenericOrderService genericOrderService;
 
     @PostMapping("/orders")
     public Order create(@RequestParam Long userId,
@@ -64,5 +68,11 @@ public class OrderController {
     @GetMapping("/orders/search-helper")
     public List<Order> searchHelper(@RequestParam Integer status) {
         return orderService.searchByHelper(status);
+    }
+
+    /** 自定义泛型基类继承入口：M/T 沿多层泛型继承折叠，最终到 OrderMapper#selectById。 */
+    @GetMapping("/orders/generic-detail")
+    public Order genericDetail(@RequestParam Long id) {
+        return genericOrderService.midGet(id);
     }
 }

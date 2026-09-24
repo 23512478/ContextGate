@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-18T21:32:36",
-    "classes": 26,
+    "generated_at": "2026-09-24T21:09:13",
+    "classes": 30,
     "controllers": 5,
-    "mappers": 5,
+    "mappers": 6,
     "entities": 5,
-    "routes": 44
+    "routes": 48
   },
   "routes": [
     {
@@ -56,6 +56,12 @@
       "path": "/api/v1/orders",
       "controller": "OrderController",
       "handler": "create"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/orders/generic-detail",
+      "controller": "OrderController",
+      "handler": "genericDetail"
     },
     {
       "method": "GET",
@@ -152,6 +158,24 @@
       "path": "/api/v1/stats/orders/sum",
       "controller": "StatsController",
       "handler": "orderSum"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stats/runtime/call",
+      "controller": "StatsController",
+      "handler": "runtimeCall"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stats/runtime/inline",
+      "controller": "StatsController",
+      "handler": "runtimeInline"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/stats/runtime/var",
+      "controller": "StatsController",
+      "handler": "runtimeVar"
     },
     {
       "method": "GET",
@@ -616,6 +640,38 @@
           }
         },
         {
+          "name": "selectById",
+          "params": "(MP 内置)",
+          "sql": {
+            "kind": "SELECT",
+            "text": "(MyBatis-Plus 内置 SELECT *)",
+            "tables": [
+              "orders"
+            ],
+            "columns": [
+              "orders.amount (Order.amount)",
+              "orders.create_time (Order.createTime)",
+              "orders.id (Order.id)",
+              "orders.status (Order.status)",
+              "orders.title (Order.title)",
+              "orders.user_id (Order.userId)"
+            ],
+            "mp_builtin": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "GenericOrderService#genericGetById",
+              "MidOrderService#genericGetById"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/orders/generic-detail"
+              }
+            ]
+          }
+        },
+        {
           "name": "selectList",
           "params": "(MP 内置)",
           "sql": {
@@ -762,6 +818,11 @@
           }
         }
       ]
+    },
+    {
+      "class": "SuperMapper",
+      "base_entity": null,
+      "methods": []
     },
     {
       "class": "UserMapper",
@@ -1157,11 +1218,51 @@
         "is_db_write": false
       }
     ],
+    "GenericOrderService#genericGetById": [
+      {
+        "kind": "mapper",
+        "class": "OrderMapper",
+        "method": "selectById",
+        "is_db_write": false
+      }
+    ],
+    "GenericOrderService#midGet": [
+      {
+        "kind": "self",
+        "class": "GenericOrderService",
+        "method": "genericGetById",
+        "is_db_write": false
+      }
+    ],
+    "MidOrderService#genericGetById": [
+      {
+        "kind": "mapper",
+        "class": "OrderMapper",
+        "method": "selectById",
+        "is_db_write": false
+      }
+    ],
+    "MidOrderService#midGet": [
+      {
+        "kind": "self",
+        "class": "MidOrderService",
+        "method": "genericGetById",
+        "is_db_write": false
+      }
+    ],
     "OrderController#create": [
       {
         "kind": "component",
         "class": "OrderServiceImpl",
         "method": "create",
+        "is_db_write": false
+      }
+    ],
+    "OrderController#genericDetail": [
+      {
+        "kind": "service",
+        "class": "GenericOrderService",
+        "method": "midGet",
         "is_db_write": false
       }
     ],
@@ -1433,6 +1534,30 @@
         "is_db_write": false
       }
     ],
+    "StatsController#runtimeCall": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "runtimeConcatCall",
+        "is_db_write": false
+      }
+    ],
+    "StatsController#runtimeInline": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "runtimeConcatInline",
+        "is_db_write": false
+      }
+    ],
+    "StatsController#runtimeVar": [
+      {
+        "kind": "service",
+        "class": "StatsService",
+        "method": "runtimeConcatVar",
+        "is_db_write": false
+      }
+    ],
     "StatsController#topWallets": [
       {
         "kind": "service",
@@ -1482,6 +1607,36 @@
       }
     ],
     "StatsService#orderAmountSum": [
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "queryForMap",
+        "is_db_write": false
+      }
+    ],
+    "StatsService#runtimeConcatCall": [
+      {
+        "kind": "self",
+        "class": "StatsService",
+        "method": "normalize",
+        "is_db_write": false
+      },
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "queryForList",
+        "is_db_write": false
+      }
+    ],
+    "StatsService#runtimeConcatInline": [
+      {
+        "kind": "component",
+        "class": "JdbcTemplate",
+        "method": "queryForList",
+        "is_db_write": false
+      }
+    ],
+    "StatsService#runtimeConcatVar": [
       {
         "kind": "component",
         "class": "JdbcTemplate",
@@ -1751,6 +1906,7 @@
         "users.openid (User.openid)",
         "users.wallet_balance (User.walletBalance)"
       ],
+      "has_runtime_param": false,
       "in_tx": false,
       "routes": [],
       "file": "src\\main\\java\\com\\demo\\config\\DemoDataInitializer.java"
@@ -1997,6 +2153,7 @@
         "users.nickname (User.nickname)",
         "users.wallet_balance (User.walletBalance)"
       ],
+      "has_runtime_param": false,
       "in_tx": false,
       "routes": [
         {
@@ -2017,6 +2174,7 @@
       "columns": [
         "orders.amount (Order.amount)"
       ],
+      "has_runtime_param": false,
       "in_tx": false,
       "routes": [
         {
@@ -2037,6 +2195,7 @@
       "columns": [
         "users.openid (User.openid)"
       ],
+      "has_runtime_param": false,
       "in_tx": false,
       "routes": [
         {
@@ -2059,6 +2218,7 @@
         "users.nickname (User.nickname)",
         "users.openid (User.openid)"
       ],
+      "has_runtime_param": false,
       "in_tx": false,
       "routes": [
         {
@@ -2081,6 +2241,7 @@
         "users.nickname (User.nickname)",
         "users.openid (User.openid)"
       ],
+      "has_runtime_param": false,
       "in_tx": false,
       "routes": [
         {
@@ -2103,6 +2264,7 @@
         "users.nickname (User.nickname)",
         "users.openid (User.openid)"
       ],
+      "has_runtime_param": false,
       "in_tx": false,
       "routes": [
         {
@@ -2123,11 +2285,78 @@
       "columns": [
         "users.openid (User.openid)"
       ],
+      "has_runtime_param": false,
       "in_tx": false,
       "routes": [
         {
           "method": "GET",
           "path": "/api/v1/stats/openid/local-inline"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    },
+    {
+      "owner": "StatsService#runtimeConcatInline",
+      "via": "jdbc-template",
+      "kind": "SELECT",
+      "text": "SELECT id, nickname FROM users WHERE id = ?",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.id (User.id)",
+        "users.nickname (User.nickname)"
+      ],
+      "has_runtime_param": true,
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/stats/runtime/inline"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    },
+    {
+      "owner": "StatsService#runtimeConcatCall",
+      "via": "jdbc-template",
+      "kind": "SELECT",
+      "text": "SELECT id, nickname FROM users WHERE id = ?",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.id (User.id)",
+        "users.nickname (User.nickname)"
+      ],
+      "has_runtime_param": true,
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/stats/runtime/call"
+        }
+      ],
+      "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"
+    },
+    {
+      "owner": "StatsService#runtimeConcatVar",
+      "via": "jdbc-template",
+      "kind": "SELECT",
+      "text": "SELECT id, nickname FROM users WHERE id = ?",
+      "tables": [
+        "users"
+      ],
+      "columns": [
+        "users.id (User.id)",
+        "users.nickname (User.nickname)"
+      ],
+      "has_runtime_param": true,
+      "in_tx": false,
+      "routes": [
+        {
+          "method": "GET",
+          "path": "/api/v1/stats/runtime/var"
         }
       ],
       "file": "src\\main\\java\\com\\demo\\service\\StatsService.java"

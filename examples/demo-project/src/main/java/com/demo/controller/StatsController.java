@@ -4,6 +4,7 @@ import com.demo.service.StatsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -50,5 +51,23 @@ public class StatsController {
     @GetMapping("/stats/openid/local-inline")
     public Long openidLocalInline() {
         return statsService.demoOpenidLocalInline();
+    }
+
+    /** 真运行期拼参：方法参数直接拼进 SQL，骨架应保留、值降级为 ?。 */
+    @GetMapping("/stats/runtime/inline")
+    public List<Map<String, Object>> runtimeInline(@RequestParam Long userId) {
+        return statsService.runtimeConcatInline(userId);
+    }
+
+    /** 真运行期拼参：方法调用返回值拼进 SQL。 */
+    @GetMapping("/stats/runtime/call")
+    public List<Map<String, Object>> runtimeCall(@RequestParam Long userId) {
+        return statsService.runtimeConcatCall(userId);
+    }
+
+    /** 真运行期拼参：拼进局部 sql 变量再整变量传参。 */
+    @GetMapping("/stats/runtime/var")
+    public Map<String, Object> runtimeVar(@RequestParam Long userId) {
+        return statsService.runtimeConcatVar(userId);
     }
 }

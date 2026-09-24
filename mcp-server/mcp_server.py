@@ -249,6 +249,8 @@ def trace_call(query: str, project: str = "") -> str:
                 txt = rec["text"]
                 short = txt if len(txt) <= 110 else txt[:107] + "..."
                 out_lines.append(f"{prefix}      `{short}`")
+                if rec.get("has_runtime_param"):
+                    out_lines.append(f"{prefix}      ⚠️ 含运行期拼参（? 为静态不可知值）")
             for edge in graph.get(node, []):
                 child = f"{edge['class']}#{edge['method']}"
                 if child in path:
@@ -329,6 +331,8 @@ def find_sql(query: str, project: str = "") -> str:
             txflag = "  🔒事务内" if rec.get("in_tx") else ""
             out.append(f"**{rec['owner']}** — @{rec['kind']}（{label}）{txflag}")
             out.append(f"- SQL: `{rec['text']}`")
+            if rec.get("has_runtime_param"):
+                out.append("- ⚠️ 含运行期拼参（`?` 为静态不可知值；值本身拿不到，表/列归因仍有效）")
             if rec.get("tables"):
                 out.append(f"- 涉及表: {', '.join('`' + t + '`' for t in rec['tables'])}")
             if rec.get("columns"):
@@ -469,6 +473,8 @@ def impact(entity: str, field: str = "", project: str = "") -> str:
                 out.append(f"- **{rec['owner']}** — @{rec['kind']}（{label}）{tx_flag}")
                 short = rec["text"] if len(rec["text"]) <= 110 else rec["text"][:107] + "..."
                 out.append(f"  - `{short}`")
+                if rec.get("has_runtime_param"):
+                    out.append("  - ⚠️ 含运行期拼参（? 为静态不可知值）")
             out.append("")
         if mp_sites:
             out.append("### MP 内置 CRUD 调用点（SELECT * / 全表写；带 ✂ 表示列已按 Wrapper .select() 裁剪）")

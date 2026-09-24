@@ -447,40 +447,143 @@ _LOCAL_STR_DECL_RE = re.compile(
     r"(?:[;{}]\s*|^\s*)(?:final\s+)?String\s+(\w+)\s*=\s*", re.MULTILINE)
 
 
-def _string_concat_tokens(s, start):
-    """从 s[start] 起取到首个 ';' 的「字面量/标识符 + 号拼接」token 列表。
-    token = ("lit", 文本) | ("id", 标识符，可带点号限定名)。
-    出现方法调用/下标等运行期成分返回 None（静态拿不到，放弃该变量）。"""
-    i, n, tokens, buf, in_str = start, len(s), [], [], False
+def _scan_concat(s, start, stop_chars):
+    """扫描一段 + 号拼接表达式（到顶层 stop_chars 字符之一为止），产出原子序列：
+    ("t", 文本) 字符串字面量/数字；("id", 限定名) 标识符；("q",) 静态不可知的
+    运行期成分（方法调用、括号/强转表达式、三元、运算符等）。
+    方法调用的括号整体平衡跳过（里面的内容不拼）。返回 (atoms, end)。
+    这是「拼参不丢骨架」的基础：旧实现一见运行期成分就整块放弃。"""
+    i, n = start, len(s)
+    atoms = []
+
+    def _skip_parens(j):
+        """s[j] 指向 '('，平衡跳到对应 ')' 之后（字符串里的括号不计）。"""
+        depth, k, in_s = 1, j + 1, False
+        while k < n and depth:
+            cc = s[k]
+            if in_s:
+                if cc == "\\":
+                    k += 2
+                    continue
+                if cc == '"':
+                    in_s = False
+            elif cc == '"':
+                in_s = True
+            elif cc == "(":
+                depth += 1
+            elif cc == ")":
+                depth -= 1
+            k += 1
+        return k
+
     while i < n:
-        ch = s[i]
-        if in_str:
-            if ch == "\\" and i + 1 < n:
-                buf.append(s[i:i + 2])
-                i += 2
-                continue
-            if ch == '"':
-                in_str = False
-                tokens.append(("lit", "".join(buf)))
-                buf = []
-            else:
-                buf.append(ch)
-        elif ch == '"':
-            in_str = True
-            buf = []
-        elif ch == ";":
-            break
-        elif ch == "+":
-            pass  # 拼接符
-        elif not ch.isspace():
-            m = re.match(r"\w+(?:\.\w+)*", s[i:])
-            if not m:
-                return None  # 方法调用/括号等，放弃
-            tokens.append(("id", m.group(0)))
-            i += len(m.group(0))
+        ws = re.match(r"\s+", s[i:])
+        if ws:
+            i += ws.end()
             continue
+        ch = s[i]
+        if ch in stop_chars:
+            break
+        if ch == "+":
+            i += 1
+            continue
+        if ch == '"':
+            if s.startswith('"""', i):  # 文本块
+                e = s.find('"""', i + 3)
+                atoms.append(("t", s[i + 3:] if e < 0 else s[i + 3:e]))
+                i = n if e < 0 else e + 3
+                continue
+            j, buf = i + 1, []
+            while j < n:
+                if s[j] == "\\":
+                    buf.append(s[j:j + 2]); j += 2; continue
+                if s[j] == '"':
+                    break
+                buf.append(s[j]); j += 1
+            atoms.append(("t", "".join(buf)))
+            i = j + 1
+            continue
+        if ch.isdigit():
+            mm = re.match(r"\d+(?:\.\d+)?[fFdDlL]?", s[i:])
+            atoms.append(("t", mm.group(0).rstrip("fFdDlL")))
+            i += mm.end()
+            continue
+        if ch == "'":
+            mm = re.match(r"'(?:[^'\\]|\\.)'", s[i:])
+            if mm:
+                atoms.append(("t", mm.group(0)))
+                i += mm.end()
+                continue
+            atoms.append(("q",)); i += 1; continue
+        if ch == "(":
+            atoms.append(("q",))
+            i = _skip_parens(i)
+            continue
+        mid = re.match(r"[A-Za-z_$][\w$]*(?:\s*\.\s*[A-Za-z_$][\w$]*)*", s[i:])
+        if mid:
+            name = re.sub(r"\s+", "", mid.group(0))
+            j = i + mid.end()
+            is_call = False
+            # 标识符链上每节都可能是调用：foo() / obj.getFoo() / a.b().c()
+            while True:
+                wm = re.match(r"\s*\(", s[j:])
+                if wm:
+                    is_call = True
+                    j = _skip_parens(j + wm.end() - 1)  # end-1 指向 '('
+                    nxt = re.match(r"\s*\.\s*[A-Za-z_$][\w$]*", s[j:])
+                    if nxt:
+                        j += nxt.end()
+                        continue
+                    break
+                nxt = re.match(r"\s*\.\s*[A-Za-z_$][\w$]*", s[j:])
+                if nxt:
+                    j += nxt.end()
+                    continue
+                break
+            atoms.append(("q",) if is_call else ("id", name))
+            i = j
+            continue
+        # 三元 ? :、运算符等：归运行期，逐字符挪到下一个拼接符/边界
+        atoms.append(("q",))
         i += 1
-    return tokens or None
+    return atoms, i
+
+
+def _render_concat(atoms, resolve_id):
+    """把 _scan_concat 的原子渲染成 SQL 骨架。
+    resolve_id(name) → None（不可知）或 (文本, has_rt)。
+    运行期成分统一成 '?'，相邻 '?' 合并；返回 (sql 或 None, has_runtime_param)。
+    全是运行期成分没有骨架时返回 None（交调用方按老规矩丢弃）。"""
+    segs, rt, pending_q = [], False, False
+
+    def flush_q():
+        nonlocal pending_q
+        if pending_q:
+            segs.append("?")
+            pending_q = False
+
+    for a in atoms:
+        if a[0] == "t":
+            flush_q(); segs.append(a[1])
+        elif a[0] == "q":
+            rt, pending_q = True, True
+        else:
+            r = resolve_id(a[1])
+            if r is None:
+                rt, pending_q = True, True
+            else:
+                # 引用的变量可能自身就带 ? 骨架：整段文本拼回来，rt 标记继续传；
+                # 收口解析器回吐的裸 "?" 走 pending，保持相邻 ? 合并
+                if r[0] == "?":
+                    pending_q = True
+                else:
+                    flush_q(); segs.append(r[0])
+                rt = rt or r[1]
+    flush_q()
+    if not segs:
+        return None, rt
+    return _join_sql_literal(" ".join(segs)), rt
+
 # 类级 static String 常量（static final / final static）：JdbcTemplate 常把 SQL 抽成常量字段
 _STATIC_STR_DECL_RE = re.compile(
     r"\b(?:static\s+(?:final\s+)?|final\s+static\s+)String\s+(\w+)\s*=")
@@ -542,42 +645,6 @@ _VERBS_WHERE = {"eq", "ne", "gt", "lt", "ge", "le", "like", "likeright", "likele
                 "in", "notin", "between", "orderbyasc", "orderbydesc", "groupby"}
 _VERB_SET = {"set"}
 _VERB_SELECT = {"select"}
-
-
-def _leading_concat_strings(s, start, id_resolve=None):
-    """从 s[start] 开始，提取开头那段「字符串字面量 + 号拼接」拼成的完整字符串。
-    遇到第一个不是字符串/加号/空白的东西就停（说明 SQL 是变量传参，静态拿不到）。
-    传入 id_resolve 时，标识符片段若能被解析成文本（局部常量/类常量），继续拼接。"""
-    i, n, parts = start, len(s), []
-    while True:
-        mt = re.match(r'\s*"((?:[^"\\]|\\.)*)"', s[i:])
-        if not mt:
-            mt = re.match(r"\s*\"\"\"(.*?)\"\"\"", s[i:], re.S)  # 文本块
-        if mt:
-            parts.append(mt.group(1))
-            i += mt.end()
-        elif id_resolve:
-            mid = re.match(r"\s*([A-Za-z_]\w*(?:\s*\.\s*\w+)*)", s[i:])
-            if mid:
-                txt = id_resolve(mid.group(1).replace(" ", ""))
-                if txt:
-                    parts.append(txt)
-                    i += mid.end()
-                else:
-                    break
-            else:
-                break
-        else:
-            break
-        m2 = re.match(r"\s*\+\s*", s[i:])
-        if not m2:
-            break
-        i += m2.end()
-    if not parts:
-        return None
-    sql = " ".join(parts)
-    return re.sub(r"\s+", " ", sql.replace(r"\n", " ").replace(r'\"', '"')
-                  .replace(r"\'", "'")).strip()
 
 
 def _enclosing_verb(region, pos):
@@ -927,12 +994,13 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
     in_tx / routes 由主流程补。"""
     out = []
     ent_by_simple = {n: c for n, c in by_simple.items() if c.get("is_entity")}
-    # ServiceImpl<XxxMapper, Entity> 的类 → Entity（lambdaQuery() 不带泛型时靠它）
+    # ServiceImpl<XxxMapper, Entity> 的类 → Entity（lambdaQuery() 不带泛型时靠它）。
+    # 走泛型继承预计算，中间夹自定义泛型基类也认
     service_entity = {}
     for c in classes.values():
-        sm = re.search(r"ServiceImpl<\s*(\w+)\s*,\s*(\w+)\s*>", c["extends"])
-        if sm:
-            service_entity[c["name"]] = sm.group(2)
+        sg = c.get("_service_generic")
+        if sg:
+            service_entity[c["name"]] = sg[1]
 
     # ---- 预扫：全局 helper 注册表 + 带 Wrapper/Example 参数的方法索引 ----
     # 只登记「有方法体」的目标：抽象接口方法（XML-backed）保持消费语义不传播
@@ -999,69 +1067,58 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                 continue
             owner = f"{c['name']}#{meth['name']}"
 
-            # 局部 String 变量名 -> 折叠后的 SQL 文本。
-            # 右值是「字面量/标识符 + 拼接」就收 token：标识符可引用本方法的局部
-            # 常量（定义先后不限，不动点折叠）、本类 static 常量、Other.Const 跨类
-            # 常量；方法调用/参数拼入等运行期成分的变量放弃
+            # 局部 String 变量名 -> (折叠后骨架文本, has_runtime_param)。
+            # 宽容折叠：字面量/可解析常量照常拼；方法参数、方法调用返回值等真运行期
+            # 成分折成 '?' 占位，骨架不丢、表/列归因照走。变量间引用定义先后不限，
+            # 先不动点收敛能落地的；实在落不了地的 id（方法参数等）按 '?' 收口
             local_tok = {}
             for lm in _LOCAL_STR_DECL_RE.finditer(body):
-                toks = _string_concat_tokens(body, lm.end())
+                toks, _e = _scan_concat(body, lm.end(), ";")
                 if toks:
                     local_tok[lm.group(1)] = toks
             local_str = {}
-            _pending = dict(local_tok)
-            _progress = True
-            while _pending and _progress:
-                _progress = False
-                for lname, toks in list(_pending.items()):
-                    parts, ok = [], True
-                    for kind_, val in toks:
-                        if kind_ == "lit":
-                            parts.append(val)
-                        elif val in local_str:
-                            parts.append(local_str[val])
-                        elif "." in val:
-                            ocls, ofield = val.rsplit(".", 1)
-                            t2 = (by_simple.get(ocls) or {}).get("static_strs", {}).get(ofield)
-                            if t2:
-                                parts.append(t2)
-                            else:
-                                ok = False
-                                break
-                        elif val in c.get("static_strs", {}):
-                            parts.append(c["static_strs"][val])
-                        else:
-                            ok = False
-                            break
-                    if ok:
-                        local_str[lname] = _join_sql_literal(" ".join(parts))
-                        del _pending[lname]
-                        _progress = True
 
-            def _local_id_resolve(name):
+            def _const_ref(val):
+                """类常量引用 Foo.BAR / 本类 BAR → 常量文本，查不到 None"""
+                if "." in val:
+                    ocls, ofield = val.rsplit(".", 1)
+                    return (by_simple.get(ocls) or {}).get("static_strs", {}).get(ofield)
+                return c.get("static_strs", {}).get(val)
+
+            def _id_text(name):
                 if name in local_str:
                     return local_str[name]
-                if "." in name:
-                    ocls, ofield = name.rsplit(".", 1)
-                    return (by_simple.get(ocls) or {}).get("static_strs", {}).get(ofield)
-                return c.get("static_strs", {}).get(name)
+                t = _const_ref(name)
+                return (t, False) if t else None
+
+            _pending = dict(local_tok)
+            while _pending:
+                progressed = False
+                for lname, toks in list(_pending.items()):
+                    # id 全部已落地（局部/类常量）才折：留住前向引用的不动点能力
+                    if all(a[0] != "id" or _id_text(a[1]) for a in toks):
+                        local_str[lname] = _render_concat(toks, _id_text)
+                        del _pending[lname]
+                        progressed = True
+                if not progressed:
+                    # 收尾批次里可能还有变量互引（声明序不保证），再救一轮不动点；
+                    # 剩下的 id 是方法参数/不可知右值，解析器回吐 '?'，骨架照样收
+                    for _ in range(len(_pending) + 1):
+                        for lname, toks in list(_pending.items()):
+                            if all(a[0] != "id" or _id_text(a[1]) for a in toks):
+                                local_str[lname] = _render_concat(toks, _id_text)
+                                del _pending[lname]
+                    for lname, toks in _pending.items():
+                        local_str[lname] = _render_concat(
+                            toks, lambda nm: _id_text(nm) or ("?", True))
+                    break
 
             # ---- 1) JdbcTemplate 裸 SQL ----
+            # 内联拼接和变量传参走同一套宽容扫描：拼了真运行期值也保留骨架
             for jm in _JDBC_CALL_RE.finditer(body):
                 api = jm.group(1).lower()
-                sql = _leading_concat_strings(body, jm.end(), _local_id_resolve)
-                if not sql:
-                    # 首参不是字面量：局部变量 → 本类 static 常量 → 其他类常量（Foo.SQL_X）
-                    arg_m = re.match(r"\s*([\w.]+)\b", body[jm.end():])
-                    name = arg_m.group(1) if arg_m else ""
-                    if "." in name:
-                        cls_name, const_name = name.rsplit(".", 1)
-                        ref = by_simple.get(cls_name.rsplit(".", 1)[-1])
-                        sql = (ref or {}).get("static_strs", {}).get(const_name)
-                    elif name in local_str:
-                        sql = local_str[name]
-                    else:
-                        sql = c.get("static_strs", {}).get(name)
+                toks, _e = _scan_concat(body, jm.end(), ",)")
+                sql, has_rt = _render_concat(toks, _id_text)
                 if not sql or not re.search(r"\b(select|insert|update|delete|create|alter|drop)\b",
                                             sql, re.IGNORECASE):
                     continue
@@ -1076,7 +1133,8 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
                 tables = list(dict.fromkeys(t.lower() for t in SQL_TABLE_RE.findall(sql)))
                 cols = resolve_sql_columns(sql, tables, table_to_entity)
                 out.append({"owner": owner, "via": "jdbc-template", "kind": kind,
-                            "text": sql, "tables": tables, "columns": sorted(set(cols))})
+                            "text": sql, "tables": tables, "columns": sorted(set(cols)),
+                            "has_runtime_param": has_rt})
 
             # ---- 2) MP Wrapper 动态链 ----
             # 2a) 单语句内联链：new XxxWrapper<Entity>( ... 链到分号。
@@ -1135,9 +1193,9 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
             if c.get("is_mapper") and c.get("base_entity"):
                 ent_name4 = c["base_entity"]
             else:
-                sm4 = re.search(r"(?:ServiceImpl|BaseManager)\s*<\s*\w+\s*,\s*(\w+)\s*>", c["extends"])
-                if sm4:
-                    ent_name4 = sm4.group(1)
+                sg4 = c.get("_service_generic")
+                if sg4:
+                    ent_name4 = sg4[1]
             if ent_name4:
                 ent_obj = ent_by_simple.get(ent_name4)
                 if ent_obj and ent_obj.get("entity_columns"):
@@ -1469,10 +1527,53 @@ def scan_methods(text, class_name):
 CLASS_RE = re.compile(
     r"(?:public\s+|abstract\s+|final\s+|static\s+)*"
     r"(class|interface|enum)\s+(\w+)"
+    # 类自己的类型参数：<T> / <M extends BaseMapper<T>, T>（允许嵌一层尖括号）
+    r"(?:\s*<\s*((?:[^<>]|<[^<>]*>)+?)\s*>)?"
     r"(?:\s+extends\s+([\w<>,\s.&]+?))?"
     r"(?:\s+implements\s+([\w<>,\s.&]+?))?"
     r"\s*\{"
 )
+
+
+def _split_top_commas(s):
+    """按顶层逗号切（尖括号/圆括号/方括号里的逗号不切），线性扫描。"""
+    parts, buf, depth = [], [], 0
+    for ch in s:
+        if ch in "<([":
+            depth += 1
+        elif ch in ">)]":
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    last = "".join(buf).strip()
+    if last:
+        parts.append(last)
+    return parts
+
+
+def _parse_type_head(t):
+    """'BaseMapper<T>' → ('BaseMapper', ['T'])；'Order' → ('Order', [])。
+    只取第一层泛型实参（嵌套的 BaseMapper<T> 原样留在实参串里）。"""
+    t = re.sub(r"\s+", "", t)
+    lt = t.find("<")
+    if lt < 0:
+        return t.split(".")[-1], []
+    root = t[:lt].split(".")[-1]
+    inner = t[lt + 1:t.rfind(">")]
+    return root, _split_top_commas(inner)
+
+
+def _parse_type_params(raw):
+    """类声明 <M extends BaseMapper<T>, T> → ['M', 'T']（只留形参名，丢掉上界）。"""
+    out = []
+    for seg in _split_top_commas(raw or ""):
+        m = re.match(r"([A-Za-z_]\w*)", seg.strip())
+        if m:
+            out.append(m.group(1))
+    return out
 # 方法声明扫描：不再用巨型正则（DOTALL + 嵌套量词在大类体上会灾难性回溯），
 # 改为“找 name( 候选 → 向前配对括号 → 向后回吞头部验证”，全程线性
 CANDIDATE = re.compile(r"(?<![\w.$])([A-Za-z_]\w*)\s*\(")
@@ -1546,9 +1647,14 @@ def parse_java(path):
     if not cm:
         return None
     kind, cname = cm.group(1), cm.group(2)
-    extends = (cm.group(3) or "").strip()
-    implements = re.split(r"[,\s]+", (cm.group(4) or "").strip())
-    implements = [i for i in implements if i]
+    type_params = _parse_type_params(cm.group(3))
+    extends = (cm.group(4) or "").strip()
+    # extends 可能是一串（接口多继承），每个头拆成 (父类简单名, [泛型实参原文])
+    extends_heads = [_parse_type_head(h) for h in _split_top_commas(extends)] if extends else []
+    implements_raw = (cm.group(5) or "").strip()
+    # 顶层逗号切分后再取简单名（Foo<Bar, Baz> 尖括号里的逗号不能切）
+    implements = [_parse_type_head(h)[0]
+                  for h in _split_top_commas(implements_raw)] if implements_raw else []
 
     fqn = pkg + "." + cname if pkg else cname
 
@@ -1565,15 +1671,18 @@ def parse_java(path):
     body_raw = raw[body_start:body_end + 1]
 
     # 字段：字段名 -> 类型简单名（全限定名/泛型/数组归一化，如 java.math.BigDecimal -> BigDecimal）
+    # field_full 保留泛型原貌（"M" / "BaseMapper<T>"），泛型基类沿继承链绑定时用
     fields = {}
+    field_full = {}
     for fm in FIELD_RE.finditer(body_clean):
         # 分组 1/2 = 带访问修饰符；分组 3/4 = 不带（包私有）
         ftype = fm.group(1) or fm.group(3)
         fname = fm.group(2) or fm.group(4)
         # 无修饰符分支会扫到方法体：`return order;` 会被误判为
-        # 类型是 "return" 的字段，进而把 order.setX() 解析成 return#setX 调用边
+        # 类型是 "return" 的字段，进而把 order.setXxx() 解析成 return#setXxx 调用边
         if fname and ftype and ftype.strip() not in RET_KEYWORDS:
             fields[fname] = simple_type(ftype)
+            field_full[fname] = re.sub(r"\s+", "", ftype)
 
     # 字段赋值推断：声明为 Object / 泛型 T 的字段（运行期接收者）在方法体里被
     # new X() / getBean(X.class) / (X) ... 赋值时，可静态取到真实类型。
@@ -1645,10 +1754,12 @@ def parse_java(path):
         entity_columns = cols
 
     # Mapper 泛型实体：extends BaseMapper<BizOrder> / BaseMapperPlus<SysDept, SysDeptVo>
-    # （RuoYi-Vue-Plus 等项目用 BaseMapperPlus 扩展，首个泛型仍是实体）
+    # （RuoYi-Vue-Plus 等项目用 BaseMapperPlus 扩展，首个泛型仍是实体）。
+    # 抓到的是本类自己的形参（SuperMapper<T> extends BaseMapper<T>）时不算，
+    # 等 main 阶段沿链折叠具体子类给的实参
     base_entity = None
     bm = re.search(r"BaseMapper\w*\s*<\s*(\w+)", extends)
-    if bm:
+    if bm and bm.group(1) not in type_params:
         base_entity = bm.group(1)
 
     # 方法：线性扫描（折叠副本上找候选，raw/clean 文本上取注解/参数原文）
@@ -1746,9 +1857,12 @@ def parse_java(path):
         "name": cname,
         "pkg": pkg,
         "kind": kind,
+        "type_params": type_params,
         "extends": extends,
+        "extends_heads": extends_heads,
         "implements": implements,
         "fields": fields,
+        "field_full": field_full,
         "field_assign": field_assign,
         "static_strs": static_strs,
         "static_pending": static_pending,
@@ -1787,38 +1901,85 @@ def resolve_callees(target, mname, by_simple, impl_of):
         if m["name"] == mname:
             method = m
             break
+    # 本类没有：沿 class extends 链找继承来的方法（自定义泛型基类那套——
+    # 方法体声明在父类、类型变量在子类绑定）。接口 default 方法不走这条路
+    chain_cls = []
+    decl_cls = target
+    if method is None:
+        c2 = target
+        guard = []
+        while c2 is not None and c2["name"] not in guard:
+            guard.append(c2["name"])
+            heads = c2.get("extends_heads") or []
+            if not heads:
+                break
+            c2 = by_simple.get(heads[0][0])  # class 单继承
+            if c2 is None or c2["kind"] != "class":
+                break
+            chain_cls.append(c2)
+            mm = next((x for x in c2["methods"] if x["name"] == mname), None)
+            if mm:
+                method = mm
+                decl_cls = c2  # 方法体里的签名/局部变量类型都在这个类的命名空间
+                break
     if method is None:
         return []
 
+    # 从 target 视角折出的泛型绑定：父类里的 T/M 在子类可能已是具体类型。
+    # key 带声明类，解析类型时要带上「这段类型写在哪个类里」（owner）
+    g_bind, g_unresolved = generic_bindings(target, by_simple)
+
+    def gtype(raw, owner):
+        return _concrete_root(raw, owner, g_bind, g_unresolved)
+
+    # 本类方法名 + 沿继承链可见的方法名（self 调用的判定范围）
     own_names = {m["name"] for m in target["methods"]}
+    self_names = set(own_names)
+    for c2 in chain_cls:
+        self_names.update(m["name"] for m in c2["methods"])
+    # 再往上补全整条链（chain_cls 可能在命中处停止）
+    _c = chain_cls[-1] if chain_cls else target
+    _guard = set()
+    while _c is not None and _c["name"] not in _guard:
+        _guard.add(_c["name"])
+        self_names.update(m["name"] for m in _c["methods"])
+        heads = _c.get("extends_heads") or []
+        _c = by_simple.get(heads[0][0]) if heads and by_simple.get(heads[0][0]) else None
+        if _c and _c["kind"] != "class":
+            _c = None
     out = []
 
-    # 本类方法委托（this.xxx() / 裸 xxx() / this::xxx）
+    # 本类/基类方法委托（this.xxx() / 裸 xxx() / this::xxx）。
+    # 节点统一记在 target（具体子类）上，再解析时继承逻辑会重新走一遍
     self_calls = set()
     for field, cmethod in method["calls"]:
-        if field == "this" and cmethod in own_names and cmethod != mname:
+        if field == "this" and cmethod in self_names and cmethod != mname:
             self_calls.add(cmethod)
     for bc in method.get("bare_calls", []):
-        if bc in own_names and bc != mname:
+        if bc in self_names and bc != mname:
             self_calls.add(bc)
     for _recv, ref_m in method.get("method_refs", []):
-        if ref_m in own_names and ref_m != mname:
+        if ref_m in self_names and ref_m != mname:
             self_calls.add(ref_m)
     for sc in sorted(self_calls):
         out.append(("self", target["name"], sc, False))
 
     # ServiceImpl<M, T> 继承式调用：this.list()/remove()/getById() 等委托给
-    # 泛型 M（mapper）的同名内置方法；被本类同名方法覆盖的不算
-    sm = re.search(r"(?:ServiceImpl|BaseManager)<\s*(\w+)\s*,\s*\w+\s*>", target["extends"])
-    if sm:
+    # 泛型 M（mapper）的同名内置方法；被本类或方法声明类以下各层重写的不算
+    # （override 分派优先于 ServiceImpl 内置实现）。
+    # 泛型绑定沿继承链折出来——中间隔着自定义泛型基类也认
+    svc_g = target.get("_service_generic")
+    if svc_g:
+        mapper_g = svc_g[0]
+        override_names = own_names | {m["name"] for c2 in chain_cls for m in c2["methods"]}
         for field, cmethod in method["calls"]:
-            if field == "this" and cmethod in _SERVICE_BUILTIN_MAP and cmethod not in own_names:
+            if field == "this" and cmethod in _SERVICE_BUILTIN_MAP and cmethod not in override_names:
                 mapped = _SERVICE_BUILTIN_MAP[cmethod]
-                out.append(("mapper", sm.group(1), mapped, mapped in MP_WRITE))
+                out.append(("mapper", mapper_g, mapped, mapped in MP_WRITE))
         for bc in method.get("bare_calls", []):
-            if bc in _SERVICE_BUILTIN_MAP and bc not in own_names:
+            if bc in _SERVICE_BUILTIN_MAP and bc not in override_names:
                 mapped = _SERVICE_BUILTIN_MAP[bc]
-                out.append(("mapper", sm.group(1), mapped, mapped in MP_WRITE))
+                out.append(("mapper", mapper_g, mapped, mapped in MP_WRITE))
 
     def emit(ftype, cmethod, allow_component):
         fcls = by_simple.get(ftype)
@@ -1842,12 +2003,13 @@ def resolve_callees(target, mname, by_simple, impl_of):
     local_vars = method.get("local_vars") or {}
 
     def parent_of(c):
-        ext = simple_type(c.get("extends") or "")
-        return by_simple.get(ext) if ext else None
+        heads = c.get("extends_heads") or []
+        return by_simple.get(heads[0][0]) if heads else None
 
     def ret_type_of(cls_name, meth_name):
-        """沿继承链查方法签名的返回类型简单名（工厂方法的产品类型就写在签名里）。
-        接口本身也在 by_simple（接口方法声明有 ret_type），直接命中即可。"""
+        """沿继承链查方法签名的返回类型「原文」（工厂方法的产品类型就写在签名里）。
+        接口本身也在 by_simple（接口方法声明有 ret_type），直接命中即可。
+        返回 (原文, 声明类名)——泛型替换要在声明类的命名空间里做"""
         c2 = by_simple.get(cls_name)
         chain = []
         while c2 is not None and c2 not in chain:
@@ -1856,8 +2018,8 @@ def resolve_callees(target, mname, by_simple, impl_of):
         for cc in chain:
             mm = next((x for x in cc["methods"] if x["name"] == meth_name), None)
             if mm and mm.get("ret_type"):
-                return simple_type(mm["ret_type"])
-        return None
+                return mm["ret_type"], cc["name"]
+        return None, None
 
     def resolve_local_desc(desc, cls=None):
         """解析工厂方法延迟描述符 → 接收者类型：
@@ -1865,22 +2027,28 @@ def resolve_callees(target, mname, by_simple, impl_of):
         ("call", "f", "build") f 的类型先解析，再查其 build 签名的 ret_type
         描述符可能嵌套（recv 也是 var 工厂产物），递归自然限深一层。"""
         if not isinstance(desc, tuple):
-            return desc
+            # 字段赋值/局部变量的类型原文写在当前方法声明类的命名空间
+            return gtype(desc, decl_cls["name"]) if desc else desc
         owner = cls or target
         if desc[0] == "bare":
-            return ret_type_of(owner["name"], desc[1])
+            raw, r_owner = ret_type_of(owner["name"], desc[1])
+            return gtype(raw, r_owner) if raw else None
         _, recv, meth = desc
         rtype = field_type_of(owner, recv)
         if not rtype:
             lv = local_vars.get(recv)
-            rtype = resolve_local_desc(lv, owner) if isinstance(lv, tuple) else lv
-        return ret_type_of(rtype, meth) if rtype else None
+            rtype = resolve_local_desc(lv, owner) if isinstance(lv, tuple) else gtype(lv, decl_cls["name"])
+        if not rtype:
+            return None
+        raw, r_owner = ret_type_of(rtype, meth)
+        return gtype(raw, r_owner) if raw else None
 
     def field_type_of(cls, fname):
         """沿继承链解析字段接收者类型：
         1. 赋值推断优先——this.f = new X() / getBean(X.class) / (X) ... / 工厂方法调用
            给了运行期真实类型（工厂描述符按签名 ret_type 延迟解析）
-        2. 声明类型兜底——Object / 单字母泛型 T 运行期才能确定，视为未解析
+        2. 声明类型兜底——字段写在泛型基类里（M mapper / BaseMapper<T> b）时，
+           用从具体子类折出的类型变量绑定替换；Object / 未绑定变量视为未解析
         返回 None 表示类型不可知（调用点不产边，宁缺毋滥）"""
         chain, c = [], cls
         while c is not None and c not in chain:
@@ -1891,15 +2059,22 @@ def resolve_callees(target, mname, by_simple, impl_of):
             if a:
                 return resolve_local_desc(a, c2) if isinstance(a, tuple) else a
         for c2 in chain:
-            t = (c2.get("fields") or {}).get(fname)
-            if t and t != "Object" and not re.fullmatch(r"[A-Z]", t):
+            full = (c2.get("field_full") or {}).get(fname)
+            if not full:
+                continue
+            # 先剥数组后缀；字段类型写在 c2 的命名空间，按 c2 折绑定
+            t = gtype(full.rstrip("[]"), c2["name"])
+            if t:
                 return t
-        return None
+        # ServiceImpl 自己的 protected M baseMapper 字段在外部 jar 里扫不到，
+        # 已折出具体 M 时按 M 处理（自定义基类里 baseMapper.xxx() 也能接链）
+        return svc_g[0] if fname == "baseMapper" and svc_g else None
 
     def local_type(name):
-        """局部变量类型：直接类型字符串，或工厂方法描述符延迟解析"""
+        """局部变量类型：直接类型字符串（经泛型替换），或工厂描述符延迟解析。
+        局部变量声明在当前方法体里，类型命名空间随方法声明类"""
         v = local_vars.get(name)
-        return resolve_local_desc(v) if isinstance(v, tuple) else v
+        return resolve_local_desc(v) if isinstance(v, tuple) else gtype(v, decl_cls["name"])
 
     for field, cmethod in method["calls"]:
         if field == "this":
@@ -1925,8 +2100,8 @@ def resolve_callees(target, mname, by_simple, impl_of):
         if cast:
             t = cast
         elif root_call:
-            m0 = next((m2 for m2 in target["methods"] if m2["name"] == root), None)
-            t = simple_type(m0["ret_type"]) if m0 and m0.get("ret_type") else None
+            _raw, _owner = ret_type_of(decl_cls["name"], root)
+            t = gtype(_raw, _owner) if _raw else None
         else:
             t = field_type_of(target, root) or local_type(root)
         for gname, gargs in getters:
@@ -1941,7 +2116,8 @@ def resolve_callees(target, mname, by_simple, impl_of):
             if not g_meth or not g_meth.get("ret_type"):
                 t = None
                 break
-            t = simple_type(g_meth["ret_type"])
+            # getter 签名写在 gcls 里，按它的命名空间折泛型
+            t = gtype(g_meth["ret_type"], gcls["name"])
         if t and local_type_ok(t):
             emit(t, tail, True)
     return out
@@ -1961,6 +2137,116 @@ def _sql_kind(by_simple, mapper_name, method_name):
     return None
 
 
+# 框架自带的泛型 Service 基类（外部 jar，源码扫不到），到这层按位置认 M/T
+_SERVICE_FRAMEWORK_BASES = {"ServiceImpl", "BaseManager"}
+_MAPPER_FRAMEWORK_RE = re.compile(r"^BaseMapper\w*$")
+
+
+def _resolve_expr(expr, owner, bindings):
+    """expr 里的裸标识符按 (声明类owner, 形参名) 折成具体类型；查不到原样留着。"""
+    def repl(m):
+        v = m.group(0)
+        return bindings.get((owner, v), v)
+    return re.sub(r"[A-Za-z_]\w*", repl, expr)
+
+
+def generic_bindings(cls, by_simple):
+    """从 cls 沿 extends 链向上折类型变量绑定。
+    key 带声明类命名空间，避免两层基类都叫 T 却指不同类型时串值：
+    Bottom extends Middle<Order>；Middle<TT> extends Base<TT>
+    折出来 ('Middle','TT')='Order'、('Base','TB')='Order'。
+    返回 (bindings, unresolved)：unresolved 是最终没绑成具体类型的 (声明类, 形参)。
+    接口多继承也展开（SuperMapper<T> extends BaseMapper<T>）。"""
+    bindings = {}
+    declared = set()
+    queue = [cls]
+    seen = set()
+    while queue:
+        cur = queue.pop(0)
+        if cur["name"] in seen:
+            continue
+        seen.add(cur["name"])
+        for p in cur.get("type_params") or []:
+            declared.add((cur["name"], p))
+        for root, args in cur.get("extends_heads") or []:
+            parent = by_simple.get(root)
+            if not parent:
+                continue  # 外部基类，这一支到头
+            for pvar, arg in zip(parent.get("type_params") or [], args):
+                key = (parent["name"], pvar)
+                if key not in bindings:  # BFS：越靠近 cls 的绑定越先落，优先
+                    bindings[key] = _resolve_expr(arg, cur["name"], bindings)
+            queue.append(parent)
+    unresolved = declared - set(bindings.keys())
+    return bindings, unresolved
+
+
+def _concrete_root(expr, owner, bindings, unresolved):
+    """expr 在 owner 命名空间里折成具体简单类名；仍是未绑定变量/Object 返回 None。"""
+    if not expr:
+        return None
+    e = _resolve_expr(expr, owner, bindings)
+    root, _args = _parse_type_head(e)
+    if not root or root == "Object":
+        return None
+    if (owner, root) in unresolved:
+        return None
+    # 防御：跨命名空间没折干净的裸形参（正常 BFS 已逐跳折掉）
+    if any(v == root for _o, v in unresolved):
+        return None
+    return root
+
+
+def service_impl_types(cls, by_simple):
+    """沿继承链找 ServiceImpl<M,T>/BaseManager<M,T>，M/T 从 cls 视角折成具体类型。
+    直接继承和中间夹自定义泛型基类都认；到框架基类时还是裸变量=真未绑定，诚实返回 None。
+    返回 (mapper简单名, 实体简单名) 或 None。"""
+    bindings, unresolved = generic_bindings(cls, by_simple)
+    queue = [cls]
+    seen = set()
+    while queue:
+        cur = queue.pop(0)
+        if cur["name"] in seen:
+            continue
+        seen.add(cur["name"])
+        for root, args in cur.get("extends_heads") or []:
+            if root in _SERVICE_FRAMEWORK_BASES:
+                if len(args) >= 2:
+                    # args 写在直接继承框架基类那一层（cur）的命名空间里
+                    m = _concrete_root(args[0], cur["name"], bindings, unresolved)
+                    t = _concrete_root(args[1], cur["name"], bindings, unresolved)
+                    if m and t:
+                        return m, t
+                return None  # 框架基类已到顶，再往上没信息
+            parent = by_simple.get(root)
+            if parent:
+                queue.append(parent)
+    return None
+
+
+def mapper_base_entity(mp, by_simple):
+    """Mapper 接口的泛型实体：直接 BaseMapper<X> 或沿自定义泛型 Mapper 链折到 X。
+    SuperMapper<T> extends BaseMapper<T>；OrderMapper extends SuperMapper<Order>
+    → Order。到 BaseMapper 系基类时 T 仍未绑定则返回 None。"""
+    bindings, unresolved = generic_bindings(mp, by_simple)
+    queue = [mp]
+    seen = set()
+    while queue:
+        cur = queue.pop(0)
+        if cur["name"] in seen:
+            continue
+        seen.add(cur["name"])
+        for root, args in cur.get("extends_heads") or []:
+            if _MAPPER_FRAMEWORK_RE.match(root):
+                if not args:
+                    return None
+                return _concrete_root(args[0], cur["name"], bindings, unresolved)
+            parent = by_simple.get(root)
+            if parent:
+                queue.append(parent)
+    return None
+
+
 def build_call_graph(classes, by_simple, impl_of):
     """全量调用图：key = (class, method)，value = [(kind, class, method, is_db_write)]"""
     graph = {}
@@ -1975,6 +2261,22 @@ def build_call_graph(classes, by_simple, impl_of):
             callees = resolve_callees(c, m["name"], by_simple, impl_of)
             if callees:
                 graph[(c["name"], m["name"])] = callees
+    # 补建继承来的方法节点：边指向 (子类, 父类方法名) 时，自身 methods 里没有该方法，
+    # 第一轮没建 key。按继承解析补出它的下游，不动点扩到不再增长（最多沿链几层）
+    while True:
+        extra = {}
+        targets = {(dc, dm) for callees in graph.values()
+                   for _k, dc, dm, _w in callees} - set(graph.keys())
+        for dc, dm in targets:
+            c2 = by_simple.get(dc)
+            if not c2 or c2["kind"] != "class":
+                continue
+            callees = resolve_callees(c2, dm, by_simple, impl_of)
+            if callees:
+                extra[(dc, dm)] = callees
+        if not extra:
+            break
+        graph.update(extra)
     return graph
 
 
@@ -2113,6 +2415,16 @@ def main():
             if base in by_simple and by_simple[base]["kind"] == "interface":
                 impl_of[base] = c["name"]
 
+    # 泛型继承预计算（在调用图/内嵌 SQL 分析之前）：
+    # 1. 每个类沿继承链折出 ServiceImpl<M,T>/BaseManager<M,T> 的具体 M、T
+    #    （中间夹自定义泛型基类也认；真未绑定的存 None）
+    # 2. Mapper 的泛型实体：直接 BaseMapper<X> 在 parse 阶段已收，
+    #    沿自定义泛型 Mapper 接口链（SuperMapper<T> extends BaseMapper<T>）的在这里补
+    for c in classes.values():
+        c["_service_generic"] = service_impl_types(c, by_simple)
+        if not c.get("base_entity") and c.get("is_mapper"):
+            c["base_entity"] = mapper_base_entity(c, by_simple)
+
     def resolve_impl(type_simple):
         impl_name = impl_of.get(type_simple)
         return by_simple.get(impl_name) if impl_name else None
@@ -2152,11 +2464,11 @@ def main():
     for mp in mappers:
         if mp["base_entity"]:
             mapper_entity[mp["name"]] = mp["base_entity"]
-    # service impl -> 实体（ServiceImpl<M, T> 模式）
+    # service impl -> 实体（ServiceImpl<M, T> 模式，含跨自定义泛型基类）
     for c in classes.values():
-        sm = re.search(r"ServiceImpl<(\w+)\s*,\s*(\w+)>", c["extends"])
-        if sm:
-            mapper_entity[sm.group(1)] = sm.group(2)
+        sg = c.get("_service_generic")
+        if sg:
+            mapper_entity[sg[0]] = sg[1]
 
     # 每条自定义 SQL：涉及哪些表、哪些列
     sql_tables = {}
@@ -2231,6 +2543,22 @@ def main():
                 target = impl
 
         method = find_method(target, mname) or find_method(cls, mname)
+        if method is None and target["kind"] == "class":
+            # 方法在自定义泛型基类等父类身上（本类只继承不声明）：沿链找回来，
+            # 否则下面的调用解析会被「方法不存在」提前截断
+            _c2, _g2 = target, []
+            while _c2 is not None and _c2["name"] not in _g2:
+                _g2.append(_c2["name"])
+                heads = _c2.get("extends_heads") or []
+                if not heads:
+                    break
+                _c2 = by_simple.get(heads[0][0])
+                if _c2 is None or _c2["kind"] != "class":
+                    break
+                mm2 = find_method(_c2, mname)
+                if mm2:
+                    method = mm2
+                    break
         tag = ""
         if (target["name"], mname) in tx_inside:
             tag = "  [在事务内]" if (target["name"], mname) not in tx_seeds else "  [@Transactional]"
@@ -2465,6 +2793,8 @@ def main():
             out.append(f"- **{rec['owner']}** — @{rec['kind']}（{via}）{tx}  (`{rec['file']}`)")
             short = rec["text"] if len(rec["text"]) <= 120 else rec["text"][:117] + "..."
             out.append(f"  - `{short}`")
+            if rec.get("has_runtime_param"):
+                out.append("  - ⚠️ 含运行期拼参（`?` 为静态不可知值，值本身拿不到；表/列归因仍有效）")
             if rec["tables"]:
                 out.append(f"  - 涉及表: {', '.join('`' + t + '`' for t in rec['tables'])}")
             if rec["routes"]:
