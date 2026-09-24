@@ -38,7 +38,7 @@ Spring Boot + MyBatis 项目的调用关系大量是**隐式约定**：一个 HT
 - **一键刷新**：代码改完让 AI 调 `refresh_map`，秒级重跑分析器
 - **多项目**：配置 `CODECONTEXT_MAPS_DIR` 后一个 server 管多个项目——`refresh_map` 自动注册、查询工具 `project` 参数切换、`list_maps` 列出全部项目和地图新鲜度
 
-已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、**链式返回值接收者**（`a.getService(x).x()`，中间节 getter 可带参，按签名返回类型逐节解析，根可为字段/局部变量/本类裸调用）、**方法内 `new`/`var` 局部对象接收者**（方法级局部变量类型表兜底）、**运行期接收者**（`getBean(X.class)` 类型从 `.class` 参数取、`Object`/泛型 `T` 字段按赋值推断、`((X) helper).m()` 强转即类型）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`（含 `extends` 继承、`<association>`/`<collection>` 嵌套映射与 `select=` 懒加载子查询链接）/`<sql>`+`<include>`/`<set>`/`<if>`/`<foreach>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参、类级 `static final` 常量及**同类常量互拼折叠**、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链、**Wrapper 拆变量跨语句链式调用**含拷贝别名、方法参数、**helper 方法条件归并**与 Mapper default 方法 `this.lambda()` 链）、实体映射（`@TableName/@TableField` **或** model/domain/entity 等包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法（count 族标 0 列；消费点 Wrapper 带显式 `.select()` 时**列裁剪**收窄为实际触碰列）、**MyBatis Generator `Example` 动态条件**（`andXxxEqualTo` 链 + `selectByExample` 消费合成 WHERE）、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（21 个 Java 文件 + XML），每种规则都有夹具和回归断言。
+已覆盖的解析规则：路由注解（`@GetMapping` 等）、`@Autowired` 注入（含包私有字段）、**链式返回值接收者**（`a.getService(x).x()`，中间节 getter 可带参，按签名返回类型逐节解析，根可为字段/局部变量/本类裸调用）、**方法内 `new`/`var` 局部对象接收者**（方法级局部变量类型表兜底）、**运行期接收者**（`getBean(X.class)` 类型从 `.class` 参数取、`Object`/泛型 `T` 字段按赋值推断、`((X) helper).m()` 强转即类型）、`@Transactional` 闭包传播（**支持标在接口方法上**，自动传播到 impl）、注解 SQL（`@Select/@Update/...`）、XML mapper（`<resultMap>`（含 `extends` 继承、`<association>`/`<collection>` 嵌套映射与 `select=` 懒加载子查询链接）/`<sql>`+`<include>`/`<set>`/`<if>`/`<foreach>`，XML 可在 resources 或 java 源码目录）、**内嵌 SQL**（JdbcTemplate 裸 SQL 含局部变量传参、类级 `static final` 常量及**同类常量互拼折叠**、MyBatis-Plus `LambdaQueryWrapper`/`lambdaQuery()` 动态链、**Wrapper 拆变量跨语句链式调用**含拷贝别名、方法参数、**helper 方法条件归并**与 Mapper default 方法 `this.lambda()` 链）、实体映射（`@TableName/@TableField` **或** model/domain/entity 等包下裸 POJO 自动推断表名）、MyBatis-Plus `BaseMapper` 内置方法（count 族标 0 列；消费点 Wrapper 带显式 `.select()` 时**列裁剪**收窄为实际触碰列）、**MyBatis Generator `Example` 动态条件**（`andXxxEqualTo` 链 + `selectByExample` 消费合成 WHERE）、全限定类型字段、裸 `SELECT *` 与别名星号 `o.*` 展开、跨表 JOIN 列精确归因、**多模块 Maven**（自动扫描所有 `src/main/java`）。仓库自带 `examples/demo-project`（26 个 Java 文件 + XML），每种规则都有夹具和回归断言。
 
 ## 目录结构
 
@@ -112,7 +112,7 @@ Trae：在你的 Spring Boot 项目根目录放 `.trae/mcp.json`；Cursor：写�
 python mcp-server/test_mcp.py
 ```
 
-会自动分析 `examples/demo-project`、走一遍 MCP 握手和四个工具的调用并做断言。
+会自动分析 `examples/demo-project`、走一遍 MCP 握手和五个工具的调用并做断言。
 
 接入后在 AI 对话框里直接说人话即可，比如：
 
