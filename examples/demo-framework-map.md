@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-24 21:09:13
-- 扫描类: 30 个 | Controller: 5 个 | Mapper: 6 个 | 实体: 5 个 | HTTP 路由: 48 条 | 调用图边: 82 个方法
+- 生成时间: 2026-09-25 18:45:44
+- 扫描类: 31 个 | Controller: 5 个 | Mapper: 6 个 | 实体: 5 个 | HTTP 路由: 49 条 | 调用图边: 83 个方法
 
 ---
 
@@ -10,31 +10,38 @@
 
 ### `GET /api/v1/comments/brief/{userId}`
 **CommentController#brief**
-   ├─ CommentMapper#selectBrief  （Mapper 方法，SQL 未找到）
+   ├─ CommentMapper#selectBrief  → @SELECT 自定义SQL
+   │     `SELECT c.id, c.rating, COUNT(r2.id) AS review_count FROM comments c LEFT JOIN comments r2 ON r2.o...`
 
 ### `GET /api/v1/comments/lazy/{rating}`
 **CommentController#lazy**
-   ├─ CommentMapper#selectLazy  （Mapper 方法，SQL 未找到）
+   ├─ CommentMapper#selectLazy  → @SELECT 自定义SQL
+   │     `SELECT id, order_id, user_id, content, rating, create_time FROM comments WHERE rating = #{rating}`
 
 ### `GET /api/v1/comments/order/{orderId}`
 **CommentController#listByOrder**
-   ├─ CommentMapper#listByOrderId  （Mapper 方法，SQL 未找到）
+   ├─ CommentMapper#listByOrderId  → @SELECT 自定义SQL
+   │     `SELECT * FROM comments WHERE order_id = #{orderId} ORDER BY create_time DESC`
 
 ### `GET /api/v1/comments/ratings`
 **CommentController#byRatings**
-   ├─ CommentMapper#listByRatings  （Mapper 方法，SQL 未找到）
+   ├─ CommentMapper#listByRatings  → @SELECT 自定义SQL
+   │     `SELECT id, order_id, rating, content FROM comments WHERE rating IN ( #{r} ) ORDER BY create_time ...`
 
 ### `GET /api/v1/comments/with-user/{orderId}`
 **CommentController#withUser**
-   ├─ CommentMapper#selectWithUser  （Mapper 方法，SQL 未找到）
+   ├─ CommentMapper#selectWithUser  → @SELECT 自定义SQL
+   │     `SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id AS uid, MD5(u.openid...`
 
 ### `GET /api/v1/comments/{id}`
 **CommentController#detail**
-   ├─ CommentMapper#selectDetail  （Mapper 方法，SQL 未找到）
+   ├─ CommentMapper#selectDetail  → @SELECT 自定义SQL
+   │     `SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.nickname AS user_name F...`
 
 ### `PATCH /api/v1/comments/{id}`
 **CommentController#update**
-   ├─ CommentMapper#updateContent  （Mapper 方法，SQL 未找到）
+   ├─ CommentMapper#updateContent  → @UPDATE 自定义SQL ✍️写
+   │     `UPDATE comments content = #{content} WHERE id = #{id}`
 
 ### `POST /api/v1/orders`
 **OrderController#create**
@@ -187,6 +194,10 @@
    └─ WalletController#buildSupport
    ├─ OrderQuerySupport#listUsersDirect  （组件/工具）
 
+### `GET /api/v1/wallet/guns-resource`
+**WalletController#gunsResource**
+   ├─ UserMapper#selectById  （MP 内置）
+
 ### `GET /api/v1/wallet/lambda`
 **WalletController#byLambda**
    ├─ UserMapper#selectByNicknameLambda  （Mapper 方法，SQL 未找到）
@@ -228,6 +239,27 @@
 
 ## 二、Mapper 自定义 SQL（注解方式）
 
+- **CommentMapper#selectDetail** — @SELECT
+  - SQL: `SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.nickname AS user_name FROM comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = #{id}`
+  - ↑ 上游路由: `GET /api/v1/comments/{id}`
+- **CommentMapper#listByOrderId** — @SELECT
+  - SQL: `SELECT * FROM comments WHERE order_id = #{orderId} ORDER BY create_time DESC`
+  - ↑ 上游路由: `GET /api/v1/comments/order/{orderId}`
+- **CommentMapper#updateContent** — @UPDATE
+  - SQL: `UPDATE comments content = #{content} WHERE id = #{id}`
+  - ↑ 上游路由: `PATCH /api/v1/comments/{id}`
+- **CommentMapper#listByRatings** — @SELECT
+  - SQL: `SELECT id, order_id, rating, content FROM comments WHERE rating IN ( #{r} ) ORDER BY create_time DESC`
+  - ↑ 上游路由: `GET /api/v1/comments/ratings`
+- **CommentMapper#selectBrief** — @SELECT
+  - SQL: `SELECT c.id, c.rating, COUNT(r2.id) AS review_count FROM comments c LEFT JOIN comments r2 ON r2.order_id = c.id GROUP BY c.id, c.rating`
+  - ↑ 上游路由: `GET /api/v1/comments/brief/{userId}`
+- **CommentMapper#selectWithUser** — @SELECT
+  - SQL: `SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id AS uid, MD5(u.openid) AS mask, COUNT(*) AS reply_count FROM comments c LEFT JOIN users u ON c.user_id = u.id GROUP BY c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id`
+  - ↑ 上游路由: `GET /api/v1/comments/with-user/{orderId}`
+- **CommentMapper#selectLazy** — @SELECT
+  - SQL: `SELECT id, order_id, user_id, content, rating, create_time FROM comments WHERE rating = #{rating}`
+  - ↑ 上游路由: `GET /api/v1/comments/lazy/{rating}`
 - **MessageMapper#selectRecent** — @SELECT
   - SQL: `SELECT * FROM messages WHERE conversation_id = #{conversationId} ORDER BY create_time DESC`
   - 涉及表: `messages`

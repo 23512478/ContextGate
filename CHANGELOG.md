@@ -1,6 +1,13 @@
 # Changelog
 
-本仓库的所有重要变更都会记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
+本仓库的所有重要变更都会记录在此。格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/)，版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/）。
+
+## [Unreleased]
+
+- **Guns 自定义路由注解（@GetResource/@PostResource）**：组合 `@RequestMapping` 的 AliasFor 形式（`name = "..."` 在 `path` 前面，第一个字符串字面量不是路径）；旧版不认识这类注解 + 取第一个字符串会取错 → `MAPPING_ANN` 新增 `GetResource`/`PostResource`，新增 `route_path_from_args` 优先提取 `path` 属性、其次 `value` 属性、最后 fallback 到第一个字符串；Guns 路由从 1 条恢复到 372 条
+- **XML SQL 渲染漏报**：JSON 输出阶段把 XML SQL 合并进了 mapper methods，但 markdown 渲染用的 `by_simple` 仍是原始解析结果（注解 SQL 为 None 时方法 `sql` 字段也是 None）→ 渲染前把 `xml_stmts` 合并到 `by_simple` 的 mapper 方法上；RuoYi-Vue/mall4j/newbee-mall 里数百处「SQL 未找到」全部清零
+- demo 夹具新增 1 条路由（`/wallet/guns-resource` 用自定义 `@GetResource`）+ 1 个注解类（`GetResource`）+ 断言 7.51
+- 训练 5 个项目：Guns（1763 文件，372 路由）、mall4j（385 文件，203 路由）、RuoYi-Vue（266 文件，147 路由）、newbee-mall（88 文件，73 路由）、spring-boot-examples（跳过，非单一 MyBatis 应用）
 
 ## [v0.2.1] — 2026-09-24
 

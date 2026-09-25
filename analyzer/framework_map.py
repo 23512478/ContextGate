@@ -46,6 +46,9 @@ MAPPING_ANN = {
     "DeleteMapping": "DELETE",
     "PatchMapping": "PATCH",
     "RequestMapping": "ANY",
+    # Guns 自定义路由注解（组合 @RequestMapping 的 AliasFor 形式）
+    "GetResource": "GET",
+    "PostResource": "POST",
 }
 # 没有 HTTP 入口、但会被框架“悄悄调用”的隐藏入口
 HIDDEN_ANN = ["Scheduled", "KafkaListener", "RabbitListener", "RocketMQMessageListener",
@@ -186,6 +189,15 @@ def ann_args(raw_text, ann_name):
             if depth == 0:
                 return raw_text[start + 1:i]
     return None
+
+
+def route_path_from_args(text):
+    """从路由注解参数里提取路径。优先显式 path 属性（Guns @GetResource），其次 value 属性，最后第一个字符串字面量（标准隐式 value）。"""
+    for pat in (r'(?:^|,)\s*path\s*=\s*"((?:[^"\\]|\\.)*)"', r'(?:^|,)\s*value\s*=\s*"((?:[^"\\]|\\.)*)"'):
+        m = re.search(pat, text)
+        if m:
+            return m.group(1)
+    return first_string(text)
 
 
 def extract_sql(ann_raw):
@@ -1785,7 +1797,7 @@ def parse_java(path):
         for ann, verb in MAPPING_ANN.items():
             if re.search(r"@" + ann + r"\b", m_ann_raw):
                 args = ann_args(m_ann_raw, ann)
-                route_path = first_string(args) if args else ""
+                route_path = route_path_from_args(args) if args else ""
                 http = (verb, route_path)
                 break
         sql = extract_sql(m_ann_raw)
@@ -2444,7 +2456,7 @@ def main():
         m = re.search(r"@RequestMapping\b", c["class_ann"])
         if m:
             args = ann_args(_head_raw(c), "RequestMapping")
-            cls_path = first_string(args) if args else ""
+            cls_path = route_path_from_args(args) if args else ""
         for meth in c["methods"]:
             if meth["http"]:
                 verb, path = meth["http"]
@@ -2520,6 +2532,15 @@ def main():
             ri = rindex.get(rec["owner"])
             rec["routes"] = ri["routes"] if ri else []
         rec["file"] = os.path.relpath(by_simple[ocls]["file"], ROOT)
+
+    # 把 XML SQL 合并到 by_simple 的 mapper 方法里，让 markdown 渲染也能看到
+    for xml_key, rec in xml_stmts.items():
+        cls_name, meth_name = xml_key.rsplit("#", 1)
+        cls = by_simple.get(cls_name)
+        if cls and cls.get("is_mapper"):
+            mm = find_method(cls, meth_name)
+            if mm and not mm.get("sql"):
+                mm["sql"] = (rec["kind"], rec["text"])
 
     # ---------------------------------------------------------------- 渲染 markdown
     lines = []

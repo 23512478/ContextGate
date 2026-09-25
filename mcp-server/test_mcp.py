@@ -483,6 +483,14 @@ def main():
         assert "WHERE id = ?" in out_rt_trace and "运行期拼参" in out_rt_trace, \
             "trace_call 行内 SQL 渲染也要带 ? 骨架与运行期提示"
 
+        # 7.51 Guns 风格自定义路由注解：path 属性优先提取，不是第一个字符串字面量
+        out_guns = call_tool(proc, "trace_call",
+                             {"query": "GET /api/v1/wallet/guns-resource"})
+        assert "GET /api/v1/wallet/guns-resource" in out_guns, \
+            "自定义 @GetResource(path=...) 应识别为 GET 路由"
+        assert "UserMapper#selectById" in out_guns, \
+            "自定义注解路由的调用链应能接到下游 Mapper"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

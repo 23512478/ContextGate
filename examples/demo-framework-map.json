@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-24T21:09:13",
-    "classes": 30,
+    "generated_at": "2026-09-25T18:45:44",
+    "classes": 31,
     "controllers": 5,
     "mappers": 6,
     "entities": 5,
-    "routes": 48
+    "routes": 49
   },
   "routes": [
     {
@@ -245,6 +245,12 @@
     },
     {
       "method": "GET",
+      "path": "/api/v1/wallet/guns-resource",
+      "controller": "WalletController",
+      "handler": "gunsResource"
+    },
+    {
+      "method": "GET",
       "path": "/api/v1/wallet/lambda",
       "controller": "WalletController",
       "handler": "byLambda"
@@ -309,21 +315,8 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.nickname AS user_name FROM comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = #{id}",
-            "tables": [
-              "comments",
-              "users"
-            ],
-            "columns": [
-              "comments.content (Comment.content)",
-              "comments.create_time (Comment.createTime)",
-              "comments.id (Comment.id)",
-              "comments.order_id (Comment.orderId)",
-              "comments.rating (Comment.rating)",
-              "comments.user_id (Comment.userId)",
-              "users.id (User.id)",
-              "users.nickname (User.nickname)"
-            ],
-            "mp_builtin": false
+            "tables": [],
+            "columns": []
           },
           "reverse": {
             "direct_callers": [
@@ -343,18 +336,8 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT * FROM comments WHERE order_id = #{orderId} ORDER BY create_time DESC",
-            "tables": [
-              "comments"
-            ],
-            "columns": [
-              "comments.content (Comment.content)",
-              "comments.create_time (Comment.createTime)",
-              "comments.id (Comment.id)",
-              "comments.order_id (Comment.orderId)",
-              "comments.rating (Comment.rating)",
-              "comments.user_id (Comment.userId)"
-            ],
-            "mp_builtin": false
+            "tables": [],
+            "columns": []
           },
           "reverse": {
             "direct_callers": [
@@ -374,14 +357,8 @@
           "sql": {
             "kind": "UPDATE",
             "text": "UPDATE comments content = #{content} WHERE id = #{id}",
-            "tables": [
-              "comments"
-            ],
-            "columns": [
-              "comments.content (Comment.content)",
-              "comments.id (Comment.id)"
-            ],
-            "mp_builtin": false
+            "tables": [],
+            "columns": []
           },
           "reverse": {
             "direct_callers": [
@@ -401,17 +378,8 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT id, order_id, rating, content FROM comments WHERE rating IN ( #{r} ) ORDER BY create_time DESC",
-            "tables": [
-              "comments"
-            ],
-            "columns": [
-              "comments.content (Comment.content)",
-              "comments.create_time (Comment.createTime)",
-              "comments.id (Comment.id)",
-              "comments.order_id (Comment.orderId)",
-              "comments.rating (Comment.rating)"
-            ],
-            "mp_builtin": false
+            "tables": [],
+            "columns": []
           },
           "reverse": {
             "direct_callers": [
@@ -431,16 +399,8 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT c.id, c.rating, COUNT(r2.id) AS review_count FROM comments c LEFT JOIN comments r2 ON r2.order_id = c.id GROUP BY c.id, c.rating",
-            "tables": [
-              "comments"
-            ],
-            "columns": [
-              "comments.id (Comment.id)",
-              "comments.order_id (Comment.orderId)",
-              "comments.rating (Comment.rating)",
-              "comments.review_count (Comment.content)"
-            ],
-            "mp_builtin": false
+            "tables": [],
+            "columns": []
           },
           "reverse": {
             "direct_callers": [
@@ -460,24 +420,8 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id AS uid, MD5(u.openid) AS mask, COUNT(*) AS reply_count FROM comments c LEFT JOIN users u ON c.user_id = u.id GROUP BY c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id",
-            "tables": [
-              "comments",
-              "users"
-            ],
-            "columns": [
-              "comments.content (Comment.content)",
-              "comments.create_time (Comment.createTime)",
-              "comments.id (Comment.id)",
-              "comments.order_id (Comment.orderId)",
-              "comments.rating (Comment.rating)",
-              "comments.reply_count (Comment.rating)",
-              "comments.user_id (Comment.userId)",
-              "users.id (User.id)",
-              "users.mask (User.openid)",
-              "users.openid (User.openid)",
-              "users.uid (User.id)"
-            ],
-            "mp_builtin": false
+            "tables": [],
+            "columns": []
           },
           "reverse": {
             "direct_callers": [
@@ -497,22 +441,8 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT id, order_id, user_id, content, rating, create_time FROM comments WHERE rating = #{rating}",
-            "tables": [
-              "comments"
-            ],
-            "columns": [
-              "comments.content (Comment.content)",
-              "comments.create_time (Comment.createTime)",
-              "comments.id (Comment.id)",
-              "comments.order_id (Comment.orderId)",
-              "comments.rating (Comment.rating)",
-              "comments.user_id (Comment.userId)",
-              "users.user_id (User.user)"
-            ],
-            "mp_builtin": false,
-            "sub_selects": [
-              "selectUserById"
-            ]
+            "tables": [],
+            "columns": []
           },
           "reverse": {
             "direct_callers": [
@@ -981,6 +911,7 @@
             "direct_callers": [
               "OrderQuerySupport#listUsersDirect",
               "OrderServiceImpl#create",
+              "WalletController#gunsResource",
               "WalletController#me"
             ],
             "routes": [
@@ -1015,6 +946,10 @@
               {
                 "method": "GET",
                 "path": "/api/v1/wallet/factory-local"
+              },
+              {
+                "method": "GET",
+                "path": "/api/v1/wallet/guns-resource"
               },
               {
                 "method": "GET",
@@ -1777,6 +1712,14 @@
         "kind": "component",
         "class": "OrderQuerySupport",
         "method": "listUsersDirect",
+        "is_db_write": false
+      }
+    ],
+    "WalletController#gunsResource": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectById",
         "is_db_write": false
       }
     ],

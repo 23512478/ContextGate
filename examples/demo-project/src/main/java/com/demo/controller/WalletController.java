@@ -177,6 +177,13 @@ public class WalletController {
         return new OrderQuerySupport();
     }
 
+    /** Guns 风格自定义路由注解：@GetResource(name = "...", path = "/wallet/guns-resource")。
+     *  path 是显式属性，不是第一个字符串字面量。 */
+    @com.demo.annotation.GetResource(name = "钱包资源", path = "/wallet/guns-resource")
+    public String gunsResource(@RequestParam Long userId) {
+        return userMapper.selectById(userId).toString();
+    }
+
     @org.springframework.beans.factory.annotation.PostConstruct
     public void initMade() {
         made = supportFactory.create();
