@@ -1,307 +1,384 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-09-25T18:45:44",
-    "classes": 31,
-    "controllers": 5,
-    "mappers": 6,
-    "entities": 5,
-    "routes": 49
+    "generated_at": "2026-09-25T20:04:45",
+    "classes": 39,
+    "controllers": 6,
+    "mappers": 7,
+    "entities": 6,
+    "routes": 53
   },
   "routes": [
     {
       "method": "GET",
       "path": "/api/v1/comments/brief/{userId}",
       "controller": "CommentController",
-      "handler": "brief"
+      "handler": "brief",
+      "handler_owner": "CommentController"
     },
     {
       "method": "GET",
       "path": "/api/v1/comments/lazy/{rating}",
       "controller": "CommentController",
-      "handler": "lazy"
+      "handler": "lazy",
+      "handler_owner": "CommentController"
     },
     {
       "method": "GET",
       "path": "/api/v1/comments/order/{orderId}",
       "controller": "CommentController",
-      "handler": "listByOrder"
+      "handler": "listByOrder",
+      "handler_owner": "CommentController"
     },
     {
       "method": "GET",
       "path": "/api/v1/comments/ratings",
       "controller": "CommentController",
-      "handler": "byRatings"
+      "handler": "byRatings",
+      "handler_owner": "CommentController"
     },
     {
       "method": "GET",
       "path": "/api/v1/comments/with-user/{orderId}",
       "controller": "CommentController",
-      "handler": "withUser"
+      "handler": "withUser",
+      "handler_owner": "CommentController"
     },
     {
       "method": "GET",
       "path": "/api/v1/comments/{id}",
       "controller": "CommentController",
-      "handler": "detail"
+      "handler": "detail",
+      "handler_owner": "CommentController"
     },
     {
       "method": "PATCH",
       "path": "/api/v1/comments/{id}",
       "controller": "CommentController",
-      "handler": "update"
+      "handler": "update",
+      "handler_owner": "CommentController"
     },
     {
       "method": "POST",
       "path": "/api/v1/orders",
       "controller": "OrderController",
-      "handler": "create"
+      "handler": "create",
+      "handler_owner": "OrderController"
     },
     {
       "method": "GET",
       "path": "/api/v1/orders/generic-detail",
       "controller": "OrderController",
-      "handler": "genericDetail"
+      "handler": "genericDetail",
+      "handler_owner": "OrderController"
     },
     {
       "method": "GET",
       "path": "/api/v1/orders/my",
       "controller": "OrderController",
-      "handler": "listMy"
+      "handler": "listMy",
+      "handler_owner": "OrderController"
     },
     {
       "method": "GET",
       "path": "/api/v1/orders/search",
       "controller": "OrderController",
-      "handler": "search"
+      "handler": "search",
+      "handler_owner": "OrderController"
     },
     {
       "method": "GET",
       "path": "/api/v1/orders/search-alias",
       "controller": "OrderController",
-      "handler": "searchAlias"
+      "handler": "searchAlias",
+      "handler_owner": "OrderController"
     },
     {
       "method": "GET",
       "path": "/api/v1/orders/search-flexible",
       "controller": "OrderController",
-      "handler": "searchFlexible"
+      "handler": "searchFlexible",
+      "handler_owner": "OrderController"
     },
     {
       "method": "GET",
       "path": "/api/v1/orders/search-helper",
       "controller": "OrderController",
-      "handler": "searchHelper"
+      "handler": "searchHelper",
+      "handler_owner": "OrderController"
     },
     {
       "method": "GET",
       "path": "/api/v1/orders/search-param",
       "controller": "OrderController",
-      "handler": "searchParam"
+      "handler": "searchParam",
+      "handler_owner": "OrderController"
     },
     {
       "method": "GET",
       "path": "/api/v1/orders/search-support",
       "controller": "OrderController",
-      "handler": "searchSupport"
+      "handler": "searchSupport",
+      "handler_owner": "OrderController"
     },
     {
       "method": "GET",
       "path": "/api/v1/products",
       "controller": "ProductController",
-      "handler": "list"
+      "handler": "list",
+      "handler_owner": "ProductController"
     },
     {
       "method": "GET",
       "path": "/api/v1/products/detail",
       "controller": "ProductController",
-      "handler": "detail"
+      "handler": "detail",
+      "handler_owner": "ProductController"
     },
     {
       "method": "POST",
       "path": "/api/v1/products/purchase",
       "controller": "ProductController",
-      "handler": "purchase"
+      "handler": "purchase",
+      "handler_owner": "ProductController"
     },
     {
       "method": "GET",
       "path": "/api/v1/stats/openid/count",
       "controller": "StatsController",
-      "handler": "openidCount"
+      "handler": "openidCount",
+      "handler_owner": "StatsController"
     },
     {
       "method": "GET",
       "path": "/api/v1/stats/openid/cross",
       "controller": "StatsController",
-      "handler": "openidCross"
+      "handler": "openidCross",
+      "handler_owner": "StatsController"
     },
     {
       "method": "GET",
       "path": "/api/v1/stats/openid/detail",
       "controller": "StatsController",
-      "handler": "openidDetail"
+      "handler": "openidDetail",
+      "handler_owner": "StatsController"
     },
     {
       "method": "GET",
       "path": "/api/v1/stats/openid/local",
       "controller": "StatsController",
-      "handler": "openidLocal"
+      "handler": "openidLocal",
+      "handler_owner": "StatsController"
     },
     {
       "method": "GET",
       "path": "/api/v1/stats/openid/local-inline",
       "controller": "StatsController",
-      "handler": "openidLocalInline"
+      "handler": "openidLocalInline",
+      "handler_owner": "StatsController"
     },
     {
       "method": "GET",
       "path": "/api/v1/stats/orders/sum",
       "controller": "StatsController",
-      "handler": "orderSum"
+      "handler": "orderSum",
+      "handler_owner": "StatsController"
     },
     {
       "method": "GET",
       "path": "/api/v1/stats/runtime/call",
       "controller": "StatsController",
-      "handler": "runtimeCall"
+      "handler": "runtimeCall",
+      "handler_owner": "StatsController"
     },
     {
       "method": "GET",
       "path": "/api/v1/stats/runtime/inline",
       "controller": "StatsController",
-      "handler": "runtimeInline"
+      "handler": "runtimeInline",
+      "handler_owner": "StatsController"
     },
     {
       "method": "GET",
       "path": "/api/v1/stats/runtime/var",
       "controller": "StatsController",
-      "handler": "runtimeVar"
+      "handler": "runtimeVar",
+      "handler_owner": "StatsController"
     },
     {
       "method": "GET",
       "path": "/api/v1/stats/wallets/top",
       "controller": "StatsController",
-      "handler": "topWallets"
+      "handler": "topWallets",
+      "handler_owner": "StatsController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/bean-chain",
       "controller": "WalletController",
-      "handler": "beanChain"
+      "handler": "beanChain",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/bean-var",
       "controller": "WalletController",
-      "handler": "beanVar"
+      "handler": "beanVar",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/chain-arg",
       "controller": "WalletController",
-      "handler": "chainArg"
+      "handler": "chainArg",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/chain-call",
       "controller": "WalletController",
-      "handler": "chainCall"
+      "handler": "chainCall",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/count",
       "controller": "WalletController",
-      "handler": "countUsers"
+      "handler": "countUsers",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/example-relay",
       "controller": "WalletController",
-      "handler": "exampleRelay"
+      "handler": "exampleRelay",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/example-support",
       "controller": "WalletController",
-      "handler": "exampleSupport"
+      "handler": "exampleSupport",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/factory-bean",
       "controller": "WalletController",
-      "handler": "factoryBean"
+      "handler": "factoryBean",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/factory-field",
       "controller": "WalletController",
-      "handler": "factoryField"
+      "handler": "factoryField",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/factory-local",
       "controller": "WalletController",
-      "handler": "factoryLocal"
+      "handler": "factoryLocal",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/guns-resource",
       "controller": "WalletController",
-      "handler": "gunsResource"
+      "handler": "gunsResource",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/lambda",
       "controller": "WalletController",
-      "handler": "byLambda"
+      "handler": "byLambda",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/local-new",
       "controller": "WalletController",
-      "handler": "localNew"
+      "handler": "localNew",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/local-var",
       "controller": "WalletController",
-      "handler": "localVar"
+      "handler": "localVar",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/me",
       "controller": "WalletController",
-      "handler": "me"
+      "handler": "me",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/obj-cast",
       "controller": "WalletController",
-      "handler": "objCast"
+      "handler": "objCast",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/obj-field",
       "controller": "WalletController",
-      "handler": "objField"
+      "handler": "objField",
+      "handler_owner": "WalletController"
     },
     {
       "method": "POST",
       "path": "/api/v1/wallet/recharge",
       "controller": "WalletController",
-      "handler": "recharge"
+      "handler": "recharge",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/search-example",
       "controller": "WalletController",
-      "handler": "searchExample"
+      "handler": "searchExample",
+      "handler_owner": "WalletController"
     },
     {
       "method": "GET",
       "path": "/api/v1/wallet/sel-prune",
       "controller": "WalletController",
-      "handler": "selPrune"
+      "handler": "selPrune",
+      "handler_owner": "WalletController"
+    },
+    {
+      "method": "POST",
+      "path": "/widget/add",
+      "controller": "WidgetController",
+      "handler": "add",
+      "handler_owner": "BaseController"
+    },
+    {
+      "method": "POST",
+      "path": "/widget/delete",
+      "controller": "WidgetController",
+      "handler": "delete",
+      "handler_owner": "BaseController"
+    },
+    {
+      "method": "GET",
+      "path": "/widget/page",
+      "controller": "WidgetController",
+      "handler": "page",
+      "handler_owner": "BaseController"
+    },
+    {
+      "method": "POST",
+      "path": "/widget/update",
+      "controller": "WidgetController",
+      "handler": "update",
+      "handler_owner": "BaseController"
     }
   ],
   "mappers": [
@@ -315,8 +392,20 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.nickname AS user_name FROM comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = #{id}",
-            "tables": [],
-            "columns": []
+            "tables": [
+              "comments",
+              "users"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.create_time (Comment.createTime)",
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)",
+              "comments.user_id (Comment.userId)",
+              "users.id (User.id)",
+              "users.nickname (User.nickname)"
+            ]
           },
           "reverse": {
             "direct_callers": [
@@ -336,8 +425,17 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT * FROM comments WHERE order_id = #{orderId} ORDER BY create_time DESC",
-            "tables": [],
-            "columns": []
+            "tables": [
+              "comments"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.create_time (Comment.createTime)",
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)",
+              "comments.user_id (Comment.userId)"
+            ]
           },
           "reverse": {
             "direct_callers": [
@@ -357,8 +455,13 @@
           "sql": {
             "kind": "UPDATE",
             "text": "UPDATE comments content = #{content} WHERE id = #{id}",
-            "tables": [],
-            "columns": []
+            "tables": [
+              "comments"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.id (Comment.id)"
+            ]
           },
           "reverse": {
             "direct_callers": [
@@ -378,8 +481,16 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT id, order_id, rating, content FROM comments WHERE rating IN ( #{r} ) ORDER BY create_time DESC",
-            "tables": [],
-            "columns": []
+            "tables": [
+              "comments"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.create_time (Comment.createTime)",
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)"
+            ]
           },
           "reverse": {
             "direct_callers": [
@@ -399,8 +510,15 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT c.id, c.rating, COUNT(r2.id) AS review_count FROM comments c LEFT JOIN comments r2 ON r2.order_id = c.id GROUP BY c.id, c.rating",
-            "tables": [],
-            "columns": []
+            "tables": [
+              "comments"
+            ],
+            "columns": [
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)",
+              "comments.review_count (Comment.content)"
+            ]
           },
           "reverse": {
             "direct_callers": [
@@ -420,8 +538,23 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id AS uid, MD5(u.openid) AS mask, COUNT(*) AS reply_count FROM comments c LEFT JOIN users u ON c.user_id = u.id GROUP BY c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id",
-            "tables": [],
-            "columns": []
+            "tables": [
+              "comments",
+              "users"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.create_time (Comment.createTime)",
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)",
+              "comments.reply_count (Comment.rating)",
+              "comments.user_id (Comment.userId)",
+              "users.id (User.id)",
+              "users.mask (User.openid)",
+              "users.openid (User.openid)",
+              "users.uid (User.id)"
+            ]
           },
           "reverse": {
             "direct_callers": [
@@ -441,8 +574,21 @@
           "sql": {
             "kind": "SELECT",
             "text": "SELECT id, order_id, user_id, content, rating, create_time FROM comments WHERE rating = #{rating}",
-            "tables": [],
-            "columns": []
+            "tables": [
+              "comments"
+            ],
+            "columns": [
+              "comments.content (Comment.content)",
+              "comments.create_time (Comment.createTime)",
+              "comments.id (Comment.id)",
+              "comments.order_id (Comment.orderId)",
+              "comments.rating (Comment.rating)",
+              "comments.user_id (Comment.userId)",
+              "users.user_id (User.user)"
+            ],
+            "sub_selects": [
+              "selectUserById"
+            ]
           },
           "reverse": {
             "direct_callers": [
@@ -1027,6 +1173,124 @@
           }
         }
       ]
+    },
+    {
+      "class": "WidgetMapper",
+      "base_entity": "Widget",
+      "methods": [
+        {
+          "name": "deleteById",
+          "params": "(MP 内置)",
+          "sql": {
+            "kind": "DELETE",
+            "text": "(MyBatis-Plus 内置 DELETE 全表写)",
+            "tables": [
+              "widget"
+            ],
+            "columns": [
+              "widget.id (Widget.id)",
+              "widget.name (Widget.name)",
+              "widget.status (Widget.status)"
+            ],
+            "mp_builtin": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "WidgetServiceImpl#delete"
+            ],
+            "routes": [
+              {
+                "method": "POST",
+                "path": "/widget/delete"
+              }
+            ]
+          }
+        },
+        {
+          "name": "insert",
+          "params": "(MP 内置)",
+          "sql": {
+            "kind": "INSERT",
+            "text": "(MyBatis-Plus 内置 INSERT 全表写)",
+            "tables": [
+              "widget"
+            ],
+            "columns": [
+              "widget.id (Widget.id)",
+              "widget.name (Widget.name)",
+              "widget.status (Widget.status)"
+            ],
+            "mp_builtin": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "WidgetServiceImpl#save"
+            ],
+            "routes": [
+              {
+                "method": "POST",
+                "path": "/widget/add"
+              }
+            ]
+          }
+        },
+        {
+          "name": "selectList",
+          "params": "(MP 内置)",
+          "sql": {
+            "kind": "SELECT",
+            "text": "(MyBatis-Plus 内置 SELECT *)",
+            "tables": [
+              "widget"
+            ],
+            "columns": [
+              "widget.id (Widget.id)",
+              "widget.name (Widget.name)",
+              "widget.status (Widget.status)"
+            ],
+            "mp_builtin": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "WidgetServiceImpl#page"
+            ],
+            "routes": [
+              {
+                "method": "GET",
+                "path": "/widget/page"
+              }
+            ]
+          }
+        },
+        {
+          "name": "updateById",
+          "params": "(MP 内置)",
+          "sql": {
+            "kind": "UPDATE",
+            "text": "(MyBatis-Plus 内置 UPDATE 全表写)",
+            "tables": [
+              "widget"
+            ],
+            "columns": [
+              "widget.id (Widget.id)",
+              "widget.name (Widget.name)",
+              "widget.status (Widget.status)"
+            ],
+            "mp_builtin": true
+          },
+          "reverse": {
+            "direct_callers": [
+              "WidgetServiceImpl#update"
+            ],
+            "routes": [
+              {
+                "method": "POST",
+                "path": "/widget/update"
+              }
+            ]
+          }
+        }
+      ]
     }
   ],
   "entities": [
@@ -1085,6 +1349,15 @@
         "nickname": "nickname",
         "walletBalance": "wallet_balance",
         "createTime": "create_time"
+      }
+    },
+    {
+      "name": "Widget",
+      "table": "widget",
+      "columns": {
+        "id": "id",
+        "name": "name",
+        "status": "status"
       }
     }
   ],
@@ -1793,6 +2066,70 @@
         "class": "UserMapper",
         "method": "selectList",
         "is_db_write": false
+      }
+    ],
+    "WidgetController#add": [
+      {
+        "kind": "service",
+        "class": "WidgetServiceImpl",
+        "method": "save",
+        "is_db_write": false
+      }
+    ],
+    "WidgetController#delete": [
+      {
+        "kind": "service",
+        "class": "WidgetServiceImpl",
+        "method": "delete",
+        "is_db_write": false
+      }
+    ],
+    "WidgetController#page": [
+      {
+        "kind": "service",
+        "class": "WidgetServiceImpl",
+        "method": "page",
+        "is_db_write": false
+      }
+    ],
+    "WidgetController#update": [
+      {
+        "kind": "service",
+        "class": "WidgetServiceImpl",
+        "method": "update",
+        "is_db_write": false
+      }
+    ],
+    "WidgetServiceImpl#delete": [
+      {
+        "kind": "mapper",
+        "class": "WidgetMapper",
+        "method": "deleteById",
+        "is_db_write": true
+      }
+    ],
+    "WidgetServiceImpl#page": [
+      {
+        "kind": "mapper",
+        "class": "WidgetMapper",
+        "method": "selectList",
+        "is_db_write": false
+      }
+    ],
+    "WidgetServiceImpl#save": [
+      {
+        "kind": "mapper",
+        "class": "WidgetMapper",
+        "method": "insert",
+        "is_db_write": true
+      }
+    ],
+    "WidgetServiceImpl#update": [
+      {
+        "kind": "mapper",
+        "class": "WidgetMapper",
+        "method": "updateById",
+        "is_db_write": true
       }
     ]
   },

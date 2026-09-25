@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-09-25 18:45:44
-- 扫描类: 31 个 | Controller: 5 个 | Mapper: 6 个 | 实体: 5 个 | HTTP 路由: 49 条 | 调用图边: 83 个方法
+- 生成时间: 2026-09-25 20:04:45
+- 扫描类: 39 个 | Controller: 6 个 | Mapper: 7 个 | 实体: 6 个 | HTTP 路由: 53 条 | 调用图边: 91 个方法
 
 ---
 
@@ -235,30 +235,64 @@
 **WalletController#selPrune**
    ├─ UserMapper#selectList  （MP 内置）
 
+### `POST /widget/add`
+**WidgetController#add**
+   └─ WidgetServiceImpl#save
+      ├─ WidgetMapper#insert  （MP 内置） ✍️写
+
+### `POST /widget/delete`
+**WidgetController#delete**
+   └─ WidgetServiceImpl#delete
+      ├─ WidgetMapper#deleteById  （MP 内置） ✍️写
+
+### `GET /widget/page`
+**WidgetController#page**
+   └─ WidgetServiceImpl#page
+      ├─ WidgetMapper#selectList  （MP 内置）
+
+### `POST /widget/update`
+**WidgetController#update**
+   └─ WidgetServiceImpl#update
+      ├─ WidgetMapper#updateById  （MP 内置） ✍️写
+
 ---
 
 ## 二、Mapper 自定义 SQL（注解方式）
 
 - **CommentMapper#selectDetail** — @SELECT
   - SQL: `SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.nickname AS user_name FROM comments c LEFT JOIN users u ON c.user_id = u.id WHERE c.id = #{id}`
+  - 涉及表: `comments`, `users`
+  - 触碰列: `comments.content (Comment.content)`, `comments.create_time (Comment.createTime)`, `comments.id (Comment.id)`, `comments.order_id (Comment.orderId)`, `comments.rating (Comment.rating)`, `comments.user_id (Comment.userId)`, `users.id (User.id)`, `users.nickname (User.nickname)`
   - ↑ 上游路由: `GET /api/v1/comments/{id}`
 - **CommentMapper#listByOrderId** — @SELECT
   - SQL: `SELECT * FROM comments WHERE order_id = #{orderId} ORDER BY create_time DESC`
+  - 涉及表: `comments`
+  - 触碰列: `comments.content (Comment.content)`, `comments.create_time (Comment.createTime)`, `comments.id (Comment.id)`, `comments.order_id (Comment.orderId)`, `comments.rating (Comment.rating)`, `comments.user_id (Comment.userId)`
   - ↑ 上游路由: `GET /api/v1/comments/order/{orderId}`
 - **CommentMapper#updateContent** — @UPDATE
   - SQL: `UPDATE comments content = #{content} WHERE id = #{id}`
+  - 涉及表: `comments`
+  - 触碰列: `comments.content (Comment.content)`, `comments.id (Comment.id)`
   - ↑ 上游路由: `PATCH /api/v1/comments/{id}`
 - **CommentMapper#listByRatings** — @SELECT
   - SQL: `SELECT id, order_id, rating, content FROM comments WHERE rating IN ( #{r} ) ORDER BY create_time DESC`
+  - 涉及表: `comments`
+  - 触碰列: `comments.content (Comment.content)`, `comments.create_time (Comment.createTime)`, `comments.id (Comment.id)`, `comments.order_id (Comment.orderId)`, `comments.rating (Comment.rating)`
   - ↑ 上游路由: `GET /api/v1/comments/ratings`
 - **CommentMapper#selectBrief** — @SELECT
   - SQL: `SELECT c.id, c.rating, COUNT(r2.id) AS review_count FROM comments c LEFT JOIN comments r2 ON r2.order_id = c.id GROUP BY c.id, c.rating`
+  - 涉及表: `comments`
+  - 触碰列: `comments.id (Comment.id)`, `comments.order_id (Comment.orderId)`, `comments.rating (Comment.rating)`, `comments.review_count (Comment.content)`
   - ↑ 上游路由: `GET /api/v1/comments/brief/{userId}`
 - **CommentMapper#selectWithUser** — @SELECT
   - SQL: `SELECT c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id AS uid, MD5(u.openid) AS mask, COUNT(*) AS reply_count FROM comments c LEFT JOIN users u ON c.user_id = u.id GROUP BY c.id, c.order_id, c.user_id, c.content, c.rating, c.create_time, u.id`
+  - 涉及表: `comments`, `users`
+  - 触碰列: `comments.content (Comment.content)`, `comments.create_time (Comment.createTime)`, `comments.id (Comment.id)`, `comments.order_id (Comment.orderId)`, `comments.rating (Comment.rating)`, `comments.reply_count (Comment.rating)`, `comments.user_id (Comment.userId)`, `users.id (User.id)`, `users.mask (User.openid)`, `users.openid (User.openid)`, `users.uid (User.id)`
   - ↑ 上游路由: `GET /api/v1/comments/with-user/{orderId}`
 - **CommentMapper#selectLazy** — @SELECT
   - SQL: `SELECT id, order_id, user_id, content, rating, create_time FROM comments WHERE rating = #{rating}`
+  - 涉及表: `comments`
+  - 触碰列: `comments.content (Comment.content)`, `comments.create_time (Comment.createTime)`, `comments.id (Comment.id)`, `comments.order_id (Comment.orderId)`, `comments.rating (Comment.rating)`, `comments.user_id (Comment.userId)`, `users.user_id (User.user)`
   - ↑ 上游路由: `GET /api/v1/comments/lazy/{rating}`
 - **MessageMapper#selectRecent** — @SELECT
   - SQL: `SELECT * FROM messages WHERE conversation_id = #{conversationId} ORDER BY create_time DESC`
@@ -330,7 +364,14 @@ UserMapper#selectById
 
 - 字段: `id`→`id`, `orderId`→`order_id`, `userId`→`user_id`, `content`→`content`, `rating`→`rating`, `createTime`→`create_time`
 - 专属 Mapper: `CommentMapper`
-- 被自定义 SQL 触碰: 无（全部走 MP 内置 CRUD）
+- 被自定义 SQL 触碰: 7 处
+  - `CommentMapper#selectDetail`（波及 1 条路由）
+  - `CommentMapper#listByOrderId`（波及 1 条路由）
+  - `CommentMapper#listByRatings`（波及 1 条路由）
+  - `CommentMapper#selectBrief`（波及 1 条路由）
+  - `CommentMapper#selectWithUser`（波及 1 条路由）
+  - `CommentMapper#selectLazy`（波及 1 条路由）
+  - `CommentMapper#updateContent`（波及 1 条路由）
 
 ### Message → 表 `messages`（5 个字段）
 
@@ -359,11 +400,19 @@ UserMapper#selectById
 
 - 字段: `id`→`id`, `openid`→`openid`, `nickname`→`nickname`, `walletBalance`→`wallet_balance`, `createTime`→`create_time`
 - 专属 Mapper: `UserMapper`
-- 被自定义 SQL 触碰: 4 处
+- 被自定义 SQL 触碰: 6 处
   - `OrderMapper#selectMyOrders`（波及 1 条路由）
   - `UserMapper#selectByOpenid`（波及 0 条路由）
   - `UserMapper#selectAll`（波及 0 条路由）
   - `UserMapper#addBalance`（波及 1 条路由）
+  - `CommentMapper#selectDetail`（波及 1 条路由）
+  - `CommentMapper#selectWithUser`（波及 1 条路由）
+
+### Widget → 表 `widget`（3 个字段）
+
+- 字段: `id`→`id`, `name`→`name`, `status`→`status`
+- 专属 Mapper: `WidgetMapper`
+- 被自定义 SQL 触碰: 无（全部走 MP 内置 CRUD）
 
 ---
 

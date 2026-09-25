@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+- **元注解组合 Controller 识别**：上轮自研组合路由注解只覆盖 Guns 一家（方法级 AliasFor 形态）→ 新增 `scan_meta_annotations` 扫项目内 `@interface` 定义上的元注解（闭包折叠多层），元注解含 `@RestController`/`@Controller` 的自定义注解标在类上即认作 Controller，含 `@RequestMapping` 的其显式 `path`/`value` 作类前缀（只认显式属性，绝不取第一个字符串——cool `api={"add"}` 会被误当路径）；jetlinks/lamp 的 `@RestController`/`@ApiRestController` 类注解形态全部收编
+- **继承父类 handler（空类 CRUD 子类）**：子类一个 mapping 方法都不写、CRUD 全在泛型基类（cool-admin `BaseController<S,T>`）旧版零路由 → 沿 extends 继承链收集父类 `@*Mapping` 方法（子类 override 同名不重复），路由节点按**子类视角**建（`WidgetController#add` 而非基类），方法体在父类但泛型实参 S/T 绑在子类，`service.save()` 据此接到子类钉死的 ServiceImpl → Mapper；路由记录新增 `handler_owner`
+- **cool-admin 约定前缀推导**：`@CoolRestController` 不写路径时按 `AutoPrefixUrlMapping` 规则从包名/类名推导（modules 之后去 `.controller`、前两段互换、类名剥 Controller 后缀及已含驼峰词），如 `com.cool.modules.space.controller.admin.AdminSpaceTypeController` → `/admin/space/type`；基类 CRUD 按 `api={...}` 白名单过滤，未声明的方法（如未列 list）不生成路由
+- **修复 RecursionError 崩溃**：`resolve_local_desc` 与 `field_type_of` 的工厂描述符互相递归成环（cool-admin/hsweb/jetlinks 触发）→ 两处加访问守卫 + 16 层深度上限，超界返回 None
+- **修复 XML SQL 合并的半截账（上轮「XML SQL 渲染漏报」遗留）**：XML 语句合并进接口方法时只同步了 `(kind, text)`，`sql_tables`/`sql_columns`/`sub_selects` 仍是空的 → JSON 里 XML 自定义 SQL 表/列为空，impact 列触碰与 N+1 子查询标注双双断链（demo 断言 resultMap JOIN 命中 content、懒加载 selectUserById 均受影响）；合并时一并补齐三个索引，JSON 序列化透传 `sub_selects`
+- demo 夹具新增 4 条路由（`/widget/{add,update,delete,page}`：`@AdminApi` 元注解组合 + 空类 `WidgetController extends BaseController<WidgetService, Widget>` + 泛型 Service 接口/实现/MP Mapper）+ 断言 7.52；基线 49 路由 / 6 Mapper / 5 实体 → 53 / 7 / 6
+- 训练 6 个自研路由注解项目：cool-admin-java（137 路由，约定前缀+继承 CRUD 全接通）、jetlinks-community（324）、jeesite5（317）、erupt（141，`@Erupt` 实体运行时动态注册 REST 属静态分析硬边界，不修）、lamp-boot（92）、hsweb-framework（37，WebFlux 框架库本体非应用，少属正常）
+
 - **Guns 自定义路由注解（@GetResource/@PostResource）**：组合 `@RequestMapping` 的 AliasFor 形式（`name = "..."` 在 `path` 前面，第一个字符串字面量不是路径）；旧版不认识这类注解 + 取第一个字符串会取错 → `MAPPING_ANN` 新增 `GetResource`/`PostResource`，新增 `route_path_from_args` 优先提取 `path` 属性、其次 `value` 属性、最后 fallback 到第一个字符串；Guns 路由从 1 条恢复到 372 条
 - **XML SQL 渲染漏报**：JSON 输出阶段把 XML SQL 合并进了 mapper methods，但 markdown 渲染用的 `by_simple` 仍是原始解析结果（注解 SQL 为 None 时方法 `sql` 字段也是 None）→ 渲染前把 `xml_stmts` 合并到 `by_simple` 的 mapper 方法上；RuoYi-Vue/mall4j/newbee-mall 里数百处「SQL 未找到」全部清零
 - demo 夹具新增 1 条路由（`/wallet/guns-resource` 用自定义 `@GetResource`）+ 1 个注解类（`GetResource`）+ 断言 7.51

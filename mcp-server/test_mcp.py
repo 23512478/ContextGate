@@ -491,6 +491,25 @@ def main():
         assert "UserMapper#selectById" in out_guns, \
             "自定义注解路由的调用链应能接到下游 Mapper"
 
+        # 7.52 类级组合注解 + 空类继承泛型基类 CRUD（cool-admin 形态）：
+        #      @AdminApi 元注解（@RestController+@RequestMapping）让一个方法都不写的空类
+        #      成为 Controller；4 个 handler 全继承自 BaseController<S,T>，
+        #      泛型实参 S=WidgetService 把基类方法体接到 WidgetServiceImpl → WidgetMapper
+        out_widget = call_tool(proc, "trace_call",
+                               {"query": "POST /widget/add"})
+        assert "POST /widget/add" in out_widget, \
+            "元注解组合 Controller 的空子类应继承到基类 add 路由"
+        assert "WidgetController#add" in out_widget, \
+            "继承 handler 的节点键应按子类视角命名，而不是基类"
+        assert ("WidgetServiceImpl#save" in out_widget
+                and "WidgetMapper#insert" in out_widget), \
+            "泛型实参应把基类 service.save 接到子类绑定的 ServiceImpl → Mapper"
+        out_widget_page = call_tool(proc, "trace_call",
+                                    {"query": "GET /widget/page"})
+        assert "WidgetServiceImpl#page" in out_widget_page \
+               and "WidgetMapper#selectList" in out_widget_page, \
+            "GET 类继承路由同样应沿泛型绑定接通到 MP 内置 Mapper 方法"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

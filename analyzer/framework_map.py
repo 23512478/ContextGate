@@ -2033,35 +2033,47 @@ def resolve_callees(target, mname, by_simple, impl_of):
                 return mm["ret_type"], cc["name"]
         return None, None
 
-    def resolve_local_desc(desc, cls=None):
+    def resolve_local_desc(desc, cls=None, _guard=None, _depth=0):
         """解析工厂方法延迟描述符 → 接收者类型：
         ("bare", "build")      本类（或 cls）工厂方法，ret_type 即产品类型
         ("call", "f", "build") f 的类型先解析，再查其 build 签名的 ret_type
-        描述符可能嵌套（recv 也是 var 工厂产物），递归自然限深一层。"""
+        描述符可能多层嵌套甚至成环（hsweb/jetlinks 这类大框架里字段工厂链很长），
+        用 (描述符, owner类名) 去重防环 + 深度上限兜底，超界返回 None（宁缺毋滥）。"""
         if not isinstance(desc, tuple):
             # 字段赋值/局部变量的类型原文写在当前方法声明类的命名空间
             return gtype(desc, decl_cls["name"]) if desc else desc
+        if _guard is None:
+            _guard = set()
+        if _depth > 16:
+            return None
         owner = cls or target
+        gkey = (desc, owner["name"])
+        if gkey in _guard:
+            return None
+        _guard.add(gkey)
         if desc[0] == "bare":
             raw, r_owner = ret_type_of(owner["name"], desc[1])
             return gtype(raw, r_owner) if raw else None
         _, recv, meth = desc
-        rtype = field_type_of(owner, recv)
+        rtype = field_type_of(owner, recv, _guard, _depth + 1)
         if not rtype:
             lv = local_vars.get(recv)
-            rtype = resolve_local_desc(lv, owner) if isinstance(lv, tuple) else gtype(lv, decl_cls["name"])
+            rtype = (resolve_local_desc(lv, owner, _guard, _depth + 1)
+                     if isinstance(lv, tuple) else gtype(lv, decl_cls["name"]))
         if not rtype:
             return None
         raw, r_owner = ret_type_of(rtype, meth)
         return gtype(raw, r_owner) if raw else None
 
-    def field_type_of(cls, fname):
+    def field_type_of(cls, fname, _guard=None, _depth=0):
         """沿继承链解析字段接收者类型：
         1. 赋值推断优先——this.f = new X() / getBean(X.class) / (X) ... / 工厂方法调用
            给了运行期真实类型（工厂描述符按签名 ret_type 延迟解析）
         2. 声明类型兜底——字段写在泛型基类里（M mapper / BaseMapper<T> b）时，
            用从具体子类折出的类型变量绑定替换；Object / 未绑定变量视为未解析
         返回 None 表示类型不可知（调用点不产边，宁缺毋滥）"""
+        if _depth > 16:
+            return None
         chain, c = [], cls
         while c is not None and c not in chain:
             chain.append(c)
@@ -2069,7 +2081,8 @@ def resolve_callees(target, mname, by_simple, impl_of):
         for c2 in chain:
             a = (c2.get("field_assign") or {}).get(fname)
             if a:
-                return resolve_local_desc(a, c2) if isinstance(a, tuple) else a
+                return (resolve_local_desc(a, c2, _guard, _depth + 1)
+                        if isinstance(a, tuple) else a)
         for c2 in chain:
             full = (c2.get("field_full") or {}).get(fname)
             if not full:
@@ -2259,8 +2272,10 @@ def mapper_base_entity(mp, by_simple):
     return None
 
 
-def build_call_graph(classes, by_simple, impl_of):
-    """全量调用图：key = (class, method)，value = [(kind, class, method, is_db_write)]"""
+def build_call_graph(classes, by_simple, impl_of, inherited_routes=()):
+    """全量调用图：key = (class, method)，value = [(kind, class, method, is_db_write)]。
+    inherited_routes: (子类, 父类mapping方法名) 序列——子类继承父类 handler 的路由，
+    方法体在父类但泛型实参（S/T）绑在子类，必须按子类视角解析才接得上 service/mapper。"""
     graph = {}
     for c in classes.values():
         if c["kind"] != "class":
@@ -2273,6 +2288,16 @@ def build_call_graph(classes, by_simple, impl_of):
             callees = resolve_callees(c, m["name"], by_simple, impl_of)
             if callees:
                 graph[(c["name"], m["name"])] = callees
+    # 继承路由种子：(子类, 父类mapping方法) 按子类视角建一份边
+    for sc, sm in sorted(set(inherited_routes)):
+        if (sc, sm) in graph:
+            continue
+        c = by_simple.get(sc)
+        if not c or c["kind"] != "class":
+            continue
+        callees = resolve_callees(c, sm, by_simple, impl_of)
+        if callees:
+            graph[(sc, sm)] = callees
     # 补建继承来的方法节点：边指向 (子类, 父类方法名) 时，自身 methods 里没有该方法，
     # 第一轮没建 key。按继承解析补出它的下游，不动点扩到不再增长（最多沿链几层）
     while True:
@@ -2318,6 +2343,92 @@ def tx_closure(graph, by_simple, impl_of):
                 inside.add(nxt)
                 stack.append(nxt)
     return seeds, inside
+
+
+# cool-admin 约定 CRUD：基类 BaseController 里这 6 个 mapping 方法是否对子类生效，
+# 取决于子类 @CoolRestController(api={...}) 列没列；子类自有方法（路径不在这组里）不受限
+_COOL_ALL_API = {"add", "delete", "update", "page", "list", "info"}
+
+
+def scan_meta_annotations(src_roots):
+    """扫本项目内自定义注解定义（@interface Xxx）上标注的元注解。
+    两类有用：
+    1. 元注解里有 @RestController/@Controller → Xxx 标在类上时该类就是 Controller
+       （Guns @ApiResource、cool-admin @CoolRestController 都是这种组合注解）
+    2. 元注解里有 @RequestMapping → Xxx 的 value/path 是类级路径前缀
+    元注解链多层（自定义注解标自定义注解）做闭包折叠。
+    返回 (controller_注解名集合, requestmapping_注解名集合)。"""
+    ann_metas = {}
+    for src in src_roots:
+        for dirpath, _dn, files in os.walk(src):
+            if os.sep + "target" + os.sep in dirpath + os.sep:
+                continue
+            for fn in files:
+                if not fn.endswith(".java"):
+                    continue
+                try:
+                    with open(os.path.join(dirpath, fn), encoding="utf-8") as f:
+                        raw = f.read()
+                except OSError:
+                    continue
+                clean = strip_code(raw)
+                for am in re.finditer(r"@interface\s+(\w+)", clean):
+                    head = clean[max(0, am.start() - 800):am.start()]
+                    ann_metas.setdefault(am.group(1), set()).update(
+                        re.findall(r"@(\w+)\b", head))
+    # 闭包：A 标了 B，B 又标了 @RestController → A 也视为标了
+    changed = True
+    while changed:
+        changed = False
+        for metas in ann_metas.values():
+            for sub in list(metas):
+                if sub in ann_metas and not ann_metas[sub] <= metas:
+                    metas |= ann_metas[sub]
+                    changed = True
+    ctrl = {n for n, ms in ann_metas.items() if ms & {"RestController", "Controller"}}
+    rm = {n for n, ms in ann_metas.items() if "RequestMapping" in ms}
+    return ctrl, rm
+
+
+def _split_camel_words(s):
+    """AdminSpaceType -> [Admin, Space, Type]（忠实复刻 cool-admin ConvertUtil 的切法）。"""
+    return re.split(r"(?<=.)(?=[A-Z])", s)
+
+
+def cool_class_prefix(c):
+    """cool-admin 专有约定推导（AutoPrefixUrlMapping）：
+    @CoolRestController 没写 value 且包名含 modules 时——
+    包名 modules 之后去掉 .controller，前两段互换当目录前缀；
+    类名剥掉 Controller 后缀和前缀里已出现的驼峰词，剩下的当末段路径。
+    例：com.cool.modules.space.controller.admin.AdminSpaceTypeController
+        -> /admin/space/type。推导不了返回 None。"""
+    pkg = c["fqn"].rsplit(".", 1)[0] if "." in c["fqn"] else ""
+    if "modules" not in pkg:
+        return None
+    tail = pkg.split("modules", 1)[1].replace(".controller", "")
+    parts = [p for p in tail.split(".") if p]
+    if len(parts) < 2:
+        return None
+    parts[0], parts[1] = parts[1], parts[0]
+    prefix = "/" + "/".join(parts)
+    # 类名去 Controller 后缀
+    m = re.match(r"([A-Za-z0-9]+)Controller$", c["name"])
+    if not m:
+        return prefix
+    prefix_cls = "".join(p[:1].upper() + p[1:] for p in parts)
+    prefix_words = _split_camel_words(prefix_cls)
+    class_words = _split_camel_words(m.group(1))
+    # 按顺序剥掉类名词序列中与前缀词匹配的部分（前缀词顺序不重要，匹配上就剥）
+    i = 0
+    for j in range(len(class_words)):
+        if any(pw.lower() == class_words[i].lower() for pw in prefix_words):
+            i += 1
+        else:
+            break
+        if i >= len(prefix_words):
+            break
+    rest = class_words[i:]
+    return (prefix + "/" + "/".join(rest).lower()).rstrip("/") if rest else prefix
 
 
 def reverse_index(graph, routes):
@@ -2448,25 +2559,90 @@ def main():
         return None
 
     # 收集路由
-    controllers = [c for c in classes.values() if c["is_controller"]]
+    # 自定义组合注解（@interface 自身标了 @RestController/@Controller/@RequestMapping）：
+    # 本项目内能扫到注解定义就认——Guns @GetResource 是方法级，这里补类级形态
+    # （cool-admin @CoolRestController 整类一个方法不写，CRUD 全靠继承基类）
+    meta_ctrl_anns, meta_rm_anns = scan_meta_annotations(src_roots)
+    ctrl_ann_re = re.compile(r"@(?:" + "|".join(map(re.escape, meta_ctrl_anns)) + r")\b") \
+        if meta_ctrl_anns else None
+    rm_ann_re = re.compile(r"@(" + "|".join(map(re.escape, meta_rm_anns)) + r")\b") \
+        if meta_rm_anns else None
+
+    def is_meta_controller(c):
+        return bool(ctrl_ann_re and ctrl_ann_re.search(c["class_ann"]))
+
+    controllers = [c for c in classes.values()
+                   if c["is_controller"] or (c.get("kind") == "class" and is_meta_controller(c))]
     mappers = [c for c in classes.values() if c["is_mapper"]]
     routes = []
     for c in controllers:
+        head = _head_raw(c)
         cls_path = ""
         m = re.search(r"@RequestMapping\b", c["class_ann"])
         if m:
-            args = ann_args(_head_raw(c), "RequestMapping")
+            args = ann_args(head, "RequestMapping")
             cls_path = route_path_from_args(args) if args else ""
+        elif rm_ann_re:
+            # 组合注解的 value/path 通过 @AliasFor 挂到 @RequestMapping。
+            # 这里只认显式 path=/value=：组合注解常带别的数组属性
+            # （cool @CoolRestController(api={"add",...})），取「第一个字符串」
+            # 会把 api 元素误当成路径
+            mm = rm_ann_re.search(c["class_ann"])
+            if mm:
+                args = ann_args(head, mm.group(1))
+                if args:
+                    vm = re.search(r'(?:^|,)\s*(?:path|value)\s*=\s*"((?:[^"\\]|\\.)*)"', args)
+                    if vm:
+                        cls_path = vm.group(1)
+
+        # cool-admin 专有：@CoolRestController 没写 value 时，前缀由包名/类名约定推导，
+        # 且基类 CRUD 只有 api={...} 列出的才注册
+        cool_auto = False
+        cool_apis = None
+        if re.search(r"@CoolRestController\b", c["class_ann"]):
+            cargs = ann_args(head, "CoolRestController")
+            apm = re.search(r"api\s*=\s*\{([^}]*)\}", cargs or "")
+            cool_apis = set(re.findall(r'"((?:[^"\\]|\\.)*)"', apm.group(1))) if apm else set()
+            if not cls_path:
+                cls_path = cool_class_prefix(c) or ""
+                # 框架还要求包名含 modules 才走自动前缀；推导成功即满足
+                cool_auto = bool(re.search(r"modules", c["fqn"].rsplit(".", 1)[0] if "." in c["fqn"] else ""))
+
+        def emit_route(meth, owner):
+            nonlocal routes
+            verb, path = meth["http"]
+            base = path.strip("/").split("/")[-1]
+            # cool 自动前缀模式：标准 CRUD 名受 api 白名单约束
+            if cool_auto and base in _COOL_ALL_API and base not in (cool_apis or set()):
+                return
+            full = (cls_path.rstrip("/") + "/" + path.lstrip("/")).rstrip("/") or "/"
+            routes.append({"method": verb, "path": full, "controller": c["name"],
+                           "handler": meth["name"], "handler_owner": owner["name"]})
+
+        # 自有方法（override 同名方法后父类 mapping 失效，以本类为准）
         for meth in c["methods"]:
             if meth["http"]:
-                verb, path = meth["http"]
-                full = (cls_path.rstrip("/") + "/" + path.lstrip("/")).rstrip("/") or "/"
-                routes.append({"method": verb, "path": full, "controller": c["name"],
-                               "handler": meth["name"]})
+                emit_route(meth, c)
+        # 继承链上父类的 mapping 方法：Spring MVC 中子类自动继承父类 handler
+        own_names = {m["name"] for m in c["methods"]}
+        pc, pguard = c, set()
+        while pc is not None and pc["name"] not in pguard:
+            pguard.add(pc["name"])
+            heads = pc.get("extends_heads") or []
+            par = by_simple.get(heads[0][0]) if heads else None
+            if not par or par.get("kind") != "class":
+                break
+            for meth in par["methods"]:
+                if meth["http"] and meth["name"] not in own_names:
+                    emit_route(meth, par)
+                    own_names.add(meth["name"])  # 再上层祖父类同名方法不重复收
+            pc = par
     routes.sort(key=lambda r: (r["path"], r["method"]))
 
-    # 调用图 + 事务闭包
-    graph = build_call_graph(classes, by_simple, impl_of)
+    # 调用图 + 事务闭包（继承父类 handler 的路由按子类视角补建节点）
+    inherited_routes = [(r["controller"], r["handler"]) for r in routes
+                        if r.get("handler_owner") and r["handler_owner"] != r["controller"]]
+    graph = build_call_graph(classes, by_simple, impl_of, inherited_routes)
     tx_seeds, tx_inside = tx_closure(graph, by_simple, impl_of)
 
     # 实体 -> 表 -> SQL 联动
@@ -2520,6 +2696,7 @@ def main():
 
     # 内嵌 SQL（JdbcTemplate 裸 SQL / MP Wrapper 动态链）
     inline_sql = scan_inline_sql(classes, by_simple, table_to_entity)
+    # 继承路由的节点也按子类视角建（见 build_call_graph 的 inherited_routes）
     route_of_node = {(r["controller"], r["handler"]): r for r in routes}
     for rec in inline_sql:
         ocls, ometh = rec["owner"].split("#", 1)
@@ -2533,7 +2710,9 @@ def main():
             rec["routes"] = ri["routes"] if ri else []
         rec["file"] = os.path.relpath(by_simple[ocls]["file"], ROOT)
 
-    # 把 XML SQL 合并到 by_simple 的 mapper 方法里，让 markdown 渲染也能看到
+    # 把 XML SQL 合并到 by_simple 的 mapper 方法里，让 markdown 渲染也能看到。
+    # sql_tables/sql_columns 建表时这些方法还没 SQL（接口方法无注解），必须一并补上，
+    # 否则 JSON 序列化/impact 按 key 查到的是空表空列（resultMap JOIN 语句断链）
     for xml_key, rec in xml_stmts.items():
         cls_name, meth_name = xml_key.rsplit("#", 1)
         cls = by_simple.get(cls_name)
@@ -2541,6 +2720,10 @@ def main():
             mm = find_method(cls, meth_name)
             if mm and not mm.get("sql"):
                 mm["sql"] = (rec["kind"], rec["text"])
+                sql_tables.setdefault(xml_key, rec.get("tables", []))
+                sql_columns[xml_key] = rec.get("columns", [])
+                if rec.get("sub_selects"):
+                    mm["sub_selects"] = rec["sub_selects"]
 
     # ---------------------------------------------------------------- 渲染 markdown
     lines = []
@@ -2884,9 +3067,11 @@ def main():
                             "name": meth["name"],
                             "params": meth["params"],
                             "sql": ({"kind": meth["sql"][0], "text": meth["sql"][1],
-                                     "tables": sql_tables.get(f"{mp['name']}#{meth['name']}", []),
-                                     "columns": sql_columns.get(f"{mp['name']}#{meth['name']}", [])}
-                                    if meth["sql"]
+                                         "tables": sql_tables.get(f"{mp['name']}#{meth['name']}", []),
+                                         "columns": sql_columns.get(f"{mp['name']}#{meth['name']}", []),
+                                         **({"sub_selects": meth["sub_selects"]}
+                                            if meth.get("sub_selects") else {})}
+                                        if meth["sql"]
                                     else xml_stmts.get(f"{mp['name']}#{meth['name']}")
                                     or builtin_sql_for(mp["name"], meth["name"], mp["base_entity"])
                                     or (mp_builtin_sql_record(meth["name"],
