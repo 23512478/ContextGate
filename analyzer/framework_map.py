@@ -22,6 +22,7 @@ import os
 import re
 import sys
 import json
+import hashlib
 import subprocess
 import tempfile
 from datetime import datetime
@@ -44,6 +45,8 @@ JAVA_SRC = os.path.join(ROOT, "src", "main", "java")
 # ---------------------------------------------------------------------------
 _BRIDGE = None        # {fqn: 桥接类数据}
 _BRIDGE_CALLS = None  # {(类fqn, 方法名, scope尾段, 调用名): 接收者类型简单名}
+_BRIDGE_CACHED = False  # 本次桥接结果是否来自指纹缓存（仅用于提示）
+_BRIDGE_MAVEN_JARS = 0  # 本次桥接从 m2 挂上的依赖 jar 数（仅用于提示）
 
 
 def _simple_of(fqn_type):
@@ -54,8 +57,45 @@ def _simple_of(fqn_type):
     return head.rsplit(".", 1)[-1]
 
 
+def _bridge_fingerprint(root):
+    """项目指纹：所有 .java 的 (相对路径, mtime_ns, size) 哈希。
+    任何文件增删改都会变指纹；源码没变就复用上次桥接结果。
+    注意：CG_NO_MAVEN 属于桥接配置，影响输出，一并进指纹（不在这里读）。"""
+    entries = []
+    for dirpath, dirnames, files in os.walk(root):
+        if os.sep + "target" + os.sep in dirpath + os.sep:
+            dirnames[:] = []
+            continue
+        for fn in files:
+            if not fn.endswith(".java"):
+                continue
+            full = os.path.join(dirpath, fn)
+            try:
+                st = os.stat(full)
+            except OSError:
+                continue
+            entries.append((os.path.relpath(full, root).replace("\\", "/"),
+                            st.st_mtime_ns, st.st_size))
+    entries.sort()
+    h = hashlib.sha1()
+    h.update(b"cg-bridge-v2\n")  # 桥接输出格式/求解器配置变了改这里，改了旧缓存自动失效
+    # 桥接运行配置也影响输出，编进指纹，防止换了 CG_NO_MAVEN 还命中旧缓存
+    h.update(("maven=" + str(os.environ.get("CG_NO_MAVEN") or "0")).encode())
+    h.update(b"\n")
+    for rel, mt, sz in entries:
+        h.update(rel.encode("utf-8"))
+        h.update(b"|")
+        h.update(str(mt).encode())
+        h.update(b"|")
+        h.update(str(sz).encode())
+        h.update(b"\n")
+    return h.hexdigest()
+
+
 def _run_java_bridge(root):
-    """跑 JavaParser 桥接器，返回 {fqn: cls}；不可用/失败返回 None"""
+    """跑 JavaParser 桥接器，返回 {fqn: cls}；不可用/失败返回 None。
+    带项目指纹缓存：源码没变（路径/mtime/size）直接复用上次 JSON，跳过 java 进程。
+    缓存放分析器自己的 java-bridge/cache/ 下，不污染被分析项目。"""
     if os.environ.get("CG_NO_BRIDGE"):
         return None
     bridge_dir = os.path.join(SCRIPT_DIR, "java-bridge")
@@ -67,6 +107,28 @@ def _run_java_bridge(root):
     if not jars:
         return None
     cp = os.pathsep.join(jars + [out_dir])
+
+    # 指纹缓存命中检查（CG_NO_CACHE=1 可强制重跑）
+    global _BRIDGE_CACHED, _BRIDGE_MAVEN_JARS
+    _BRIDGE_MAVEN_JARS = 0
+    cache_dir = os.path.join(bridge_dir, "cache")
+    cache_file = os.path.join(
+        cache_dir,
+        hashlib.sha1(os.path.abspath(root).encode("utf-8")).hexdigest()[:16] + ".json")
+    fingerprint = None
+    if not os.environ.get("CG_NO_CACHE"):
+        try:
+            fingerprint = _bridge_fingerprint(root)
+            with open(cache_file, encoding="utf-8") as f:
+                cached = json.load(f)
+            if cached.get("fingerprint") == fingerprint:
+                _BRIDGE_CACHED = True
+                _BRIDGE_MAVEN_JARS = cached.get("maven_jars", 0)
+                return {c["fqn"]: c for c in cached.get("classes", [])}
+        except Exception:
+            pass
+    _BRIDGE_CACHED = False
+
     try:
         tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
         tmp.close()
@@ -77,7 +139,23 @@ def _run_java_bridge(root):
         with open(tmp.name, encoding="utf-8") as f:
             data = json.load(f)
         os.unlink(tmp.name)
-        return {c["fqn"]: c for c in data.get("classes", [])}
+        classes = data.get("classes", [])
+        _BRIDGE_MAVEN_JARS = (data.get("meta") or {}).get("maven_jars", 0)
+        # 写缓存（失败无所谓，下次重跑而已）
+        if fingerprint is None and not os.environ.get("CG_NO_CACHE"):
+            try:
+                fingerprint = _bridge_fingerprint(root)
+            except Exception:
+                fingerprint = None
+        if fingerprint:
+            try:
+                os.makedirs(cache_dir, exist_ok=True)
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump({"fingerprint": fingerprint, "classes": classes,
+                               "maven_jars": _BRIDGE_MAVEN_JARS}, f)
+            except Exception:
+                pass
+        return {c["fqn"]: c for c in classes}
     except Exception:
         return None
 
@@ -194,6 +272,24 @@ MP_WRITE = {
     "insert", "deleteById", "deleteByIds", "deleteByMap", "delete", "updateById", "update",
     "save", "saveBatch", "saveOrUpdate", "saveOrUpdateBatch", "updateBatchById",
     "removeById", "removeByIds", "removeByMap", "remove",
+}
+
+# MP ActiveRecord Model 内置方法 -> BaseMapper 对应方法。
+# Model.insert()/updateById() 内部走 sqlSession 按实体类找 mapper 执行，
+# 语义等价于该实体专属 mapper 的同名内置方法
+_AR_BUILTIN_MAP = {
+    "insert": "insert",
+    "updateById": "updateById",
+    "update": "update",
+    "saveOrUpdate": "saveOrUpdate",
+    "deleteById": "deleteById",
+    "deleteByIds": "deleteByIds",
+    "selectById": "selectById",
+    "selectAll": "selectList",
+    "selectList": "selectList",
+    "selectPage": "selectPage",
+    "selectCount": "selectCount",
+    "selectOne": "selectOne",
 }
 SQL_ANN = {"Select": "SELECT", "Update": "UPDATE", "Insert": "INSERT", "Delete": "DELETE"}
 
@@ -1857,9 +1953,11 @@ def parse_java(path):
 
     # 实体信息：@TableName + 字段 -> 列名（MP 驼峰转下划线，@TableField 显式覆盖）
     table_name = None
+    table_explicit = False
     tm = re.search(r'@TableName\(\s*(?:value\s*=\s*)?"([^"]+)"', head_raw)
     if tm:
         table_name = tm.group(1)
+        table_explicit = True
     # 原生 MyBatis 兜底：model/domain/entity 包下的普通类（无 @TableName）也算实体，
     # 表名由类名驼峰转下划线推断（MyBatis Generator 风格）
     if table_name is None and kind == "class":
@@ -1884,6 +1982,13 @@ def parse_java(path):
     bm = re.search(r"BaseMapper\w*\s*<\s*(\w+)", extends)
     if bm and bm.group(1) not in type_params:
         base_entity = bm.group(1)
+
+    # MP ActiveRecord：直接继承 com.baomidou...activerecord.Model。
+    # 基类在外部 jar 扫不到，靠 import 全限定名 + extends Model 双头确认，
+    # 避免把项目自己的 Model 类误判（AgileBoot BaseEntity 就是这种形态）
+    ar_base = (any(root == "Model" for root, _a in extends_heads)
+               and bool(re.search(r"import\s+com\.baomidou\.mybatisplus\.extension\.activerecord\.Model\s*;",
+                                  raw)))
 
     # 方法：线性扫描（折叠副本上找候选，raw/clean 文本上取注解/参数原文）
     body_scan = collapse_ann_args(body_clean)
@@ -1993,6 +2098,8 @@ def parse_java(path):
         "class_ann": class_ann,
         "file": path,
         "table_name": table_name,
+        "table_explicit": table_explicit,
+        "ar_base": ar_base,
         "entity_columns": entity_columns,
         "base_entity": base_entity,
         "is_controller": bool(re.search(r"@RestController\b", class_ann)
@@ -2053,6 +2160,13 @@ def resolve_callees(target, mname, by_simple, impl_of):
         if svc_g and mname in _SERVICE_BUILTIN_MAP:
             mapped = _SERVICE_BUILTIN_MAP[mname]
             return [("mapper", svc_g[0], mapped, mapped in MP_WRITE)]
+        # MP ActiveRecord：model.insert()/selectById() 等继承自 activerecord.Model，
+        # 按实体的专属 mapper 合成边（AgileBoot 充血模型：方法在外部 jar，本表由
+        # 继承链上的 @TableName 确定）。专属 mapper 找不到就诚实不产边
+        ar = target.get("_ar")
+        if ar and ar.get("mapper") and mname in _AR_BUILTIN_MAP:
+            mapped = _AR_BUILTIN_MAP[mname]
+            return [("mapper", ar["mapper"], mapped, mapped in MP_WRITE)]
         return []
 
     # 从 target 视角折出的泛型绑定：父类里的 T/M 在子类可能已是具体类型。
@@ -2085,6 +2199,10 @@ def resolve_callees(target, mname, by_simple, impl_of):
     for field, cmethod in method["calls"]:
         if field == "this" and cmethod in self_names and cmethod != mname:
             self_calls.add(cmethod)
+        # super.xxx()：项目内父类方法按 self 边处理（节点建在子类视角，
+        # 再解析时继承逻辑会重新走一遍）；外部框架基类的内置方法见后面 AR 段
+        if field == "super" and cmethod in self_names and cmethod != mname:
+            self_calls.add(cmethod)
     for bc in method.get("bare_calls", []):
         if bc in self_names and bc != mname:
             self_calls.add(bc)
@@ -2111,6 +2229,27 @@ def resolve_callees(target, mname, by_simple, impl_of):
                 mapped = _SERVICE_BUILTIN_MAP[bc]
                 out.append(("mapper", mapper_g, mapped, mapped in MP_WRITE))
 
+    # ActiveRecord 继承式调用：this.insert()/裸 insert()/super.updateById()
+    # 委托给实体专属 mapper 的同名内置方法。项目内各层重写过的不算
+    # （UserModel 重写 updateById 时，方法体里的 super.updateById() 才是真写库）
+    ar = target.get("_ar")
+    if ar and ar.get("mapper"):
+        ar_mapper = ar["mapper"]
+        ar_override = own_names | {m["name"] for c2 in chain_cls for m in c2["methods"]}
+        for field, cmethod in method["calls"]:
+            if cmethod not in _AR_BUILTIN_MAP:
+                continue
+            mapped = _AR_BUILTIN_MAP[cmethod]
+            # super 调的一定是父层实现（含外部 jar），直接算写库
+            if field == "super":
+                out.append(("mapper", ar_mapper, mapped, mapped in MP_WRITE))
+            elif field == "this" and cmethod not in ar_override:
+                out.append(("mapper", ar_mapper, mapped, mapped in MP_WRITE))
+        for bc in method.get("bare_calls", []):
+            if bc in _AR_BUILTIN_MAP and bc not in ar_override:
+                mapped = _AR_BUILTIN_MAP[bc]
+                out.append(("mapper", ar_mapper, mapped, mapped in MP_WRITE))
+
     def emit(ftype, cmethod, allow_component):
         fcls = by_simple.get(ftype)
         if fcls and fcls["is_mapper"]:
@@ -2125,10 +2264,16 @@ def resolve_callees(target, mname, by_simple, impl_of):
 
     def local_type_ok(ftype):
         # 局部变量/链式来源的类型过滤：类型必须在 by_simple（String/List 等
-        # 查不到的天然拦掉），且不是实体/Example——u.setXxx()、criteria 链
-        # 不是组件调用，收进来全是噪音边
+        # 查不到的天然拦掉），且不是普通实体/Example——u.setXxx()、criteria 链
+        # 不是组件调用，收进来全是噪音边。
+        # 例外：充血领域模型（有表但同时持有 service/工厂协作者，如 AgileBoot
+        # UserModel）——它的 checkXxx()/insert() 是正经业务链路
         fcls = by_simple.get(ftype)
-        return bool(fcls) and not fcls.get("is_entity") and not ftype.endswith("Example")
+        if not fcls:
+            return False
+        if fcls.get("_is_domain"):
+            return True
+        return not fcls.get("is_entity") and not ftype.endswith("Example")
 
     local_vars = method.get("local_vars") or {}
 
@@ -2219,6 +2364,24 @@ def resolve_callees(target, mname, by_simple, impl_of):
         v = local_vars.get(name)
         return resolve_local_desc(v) if isinstance(v, tuple) else gtype(v, decl_cls["name"])
 
+    def domain_call_ok(ftype, cmethod):
+        """充血领域模型只放行真实行为：项目内（含继承链）声明的方法、AR 内置方法。
+        继承自 @Data 实体的 Lombok getter/setter（getUserId/setStatus）源码里
+        没有方法体，收进来是噪音边，拦掉。非 domain 类一律放行。"""
+        fc = by_simple.get(ftype)
+        if not fc or not fc.get("_is_domain"):
+            return True
+        if cmethod in _AR_BUILTIN_MAP:
+            return True
+        c, seen = fc, set()
+        while c is not None and c["name"] not in seen:
+            seen.add(c["name"])
+            if any(m["name"] == cmethod for m in c["methods"]):
+                return True
+            heads = c.get("extends_heads") or []
+            c = by_simple.get(heads[0][0]) if heads else None
+        return False
+
     for field, cmethod in method["calls"]:
         if field == "this":
             continue
@@ -2228,11 +2391,13 @@ def resolve_callees(target, mname, by_simple, impl_of):
             continue
         ftype = field_type_of(target, field)
         if ftype:
-            emit(ftype, cmethod, True)
+            if domain_call_ok(ftype, cmethod):
+                emit(ftype, cmethod, True)
             continue
         ltype = local_type(field)
         if ltype and local_type_ok(ltype):
-            emit(ltype, cmethod, True)
+            if domain_call_ok(ltype, cmethod):
+                emit(ltype, cmethod, True)
             continue
         # JavaParser 桥接兜底：正则两条路（字段表/局部变量）都解不出时，
         # 用符号求解的接收者类型。只认 mapper/service——DTO getter 这类
@@ -2245,8 +2410,10 @@ def resolve_callees(target, mname, by_simple, impl_of):
                 # 接口会被 emit 归一化到实现类，枚举 implement 接口时会被误归——
                 # 检查归一化后的目标，枚举不是链路节点
                 final_cls = by_simple.get(impl_of.get(bt, bt))
-                if (bcls and (bcls["is_mapper"] or bcls["is_service_impl"] or bcls["kind"] == "interface")
-                        and (not final_cls or final_cls["kind"] != "enum")):
+                if (bcls and (bcls["is_mapper"] or bcls["is_service_impl"]
+                              or bcls["kind"] == "interface" or bcls.get("_is_domain"))
+                        and (not final_cls or final_cls["kind"] != "enum")
+                        and domain_call_ok(bt, cmethod)):
                     emit(bt, cmethod, False)
         # 都查不到：静态调用/运行期才解析的接收者，不追
 
@@ -2405,6 +2572,78 @@ def mapper_base_entity(mp, by_simple):
     return None
 
 
+_COLLABORATOR_RE = re.compile(r"(Service|Factory|Manager|Repository|Resolver|Processor|Handler|Gateway|Client)$")
+
+
+def _has_collaborator(cls, by_simple):
+    """字段里有没有"协作者"（mapper/service/工厂等行为对象）。
+    充血领域模型（UserModel 持有 SysUserService）靠这个和纯数据 DTO 区分——
+    DTO 的字段全是 String/Long 等原始类型，一个协作者都没有。"""
+    for ft in (cls.get("fields") or {}).values():
+        fcls = by_simple.get(ft)
+        if not fcls:
+            continue
+        if (fcls.get("is_mapper") or fcls.get("is_service_impl")
+                or fcls["kind"] == "interface" or _COLLABORATOR_RE.search(ft)):
+            return True
+    return False
+
+
+def ar_and_domain_precompute(classes, by_simple):
+    """ActiveRecord + 充血模型预计算（main 阶段，by_simple 建好后跑一次）：
+
+    1. 假表名纠正：包名启发式推出的表名（model/domain 包兜底）不可信——
+       - 沿继承链找到显式 @TableName 祖先 → 继承它的表和列
+         （UserModel extends SysUserEntity → 操作的是 sys_user，不是 user_model）
+       - 没有实体祖先、但持有协作者字段 → 是领域行为对象，撤掉表名（不是一张表）
+    2. _ar：继承链上出现 MP activerecord.Model 时，记录 {表, 实体, 专属mapper}，
+       Model.insert()/updateById() 等内置调用据此合成 mapper 边
+    3. _is_domain：映射到表但同时持有协作者的充血模型，允许作为调用链节点
+       （普通实体仍然拦——param.getXxx() 不能成边）
+    """
+    entity_to_mapper = {}
+    for c in classes.values():
+        if c.get("is_mapper") and c.get("base_entity"):
+            entity_to_mapper[c["base_entity"]] = c["name"]
+
+    for cls in classes.values():
+        # 沿 class 单继承链收集（含外部基类：最后一跳 root 在 by_simple 查不到即止）
+        chain, seen = [], set()
+        cur = cls
+        while cur is not None and cur["name"] not in seen:
+            seen.add(cur["name"])
+            chain.append(cur)
+            heads = cur.get("extends_heads") or []
+            cur = by_simple.get(heads[0][0]) if heads else None
+
+        explicit_owner = next((c for c in chain if c.get("table_explicit")), None)
+
+        if not cls.get("table_explicit") and cls.get("table_name") is not None:
+            if explicit_owner is not None:
+                cls["table_name"] = explicit_owner["table_name"]
+                cls["entity_columns"] = explicit_owner.get("entity_columns")
+            elif _has_collaborator(cls, by_simple):
+                cls["table_name"] = None
+                cls["entity_columns"] = None
+        cls["is_entity"] = cls.get("table_name") is not None
+
+        reaches_ar = any(c.get("ar_base") for c in chain)
+        if reaches_ar and explicit_owner is not None:
+            ent = explicit_owner["name"]
+            mapper = entity_to_mapper.get(ent)
+            if not mapper:
+                guess = ent + "Mapper"
+                gc = by_simple.get(guess)
+                if gc and gc.get("is_mapper"):
+                    mapper = guess
+            cls["_ar"] = {"table": explicit_owner["table_name"],
+                          "entity": ent, "mapper": mapper}
+        else:
+            cls["_ar"] = None
+
+        cls["_is_domain"] = bool(cls.get("table_name")) and _has_collaborator(cls, by_simple)
+
+
 def build_call_graph(classes, by_simple, impl_of, inherited_routes=()):
     """全量调用图：key = (class, method)，value = [(kind, class, method, is_db_write)]。
     inherited_routes: (子类, 父类mapping方法名) 序列——子类继承父类 handler 的路由，
@@ -2528,6 +2767,89 @@ def _split_camel_words(s):
     return re.split(r"(?<=.)(?=[A-Z])", s)
 
 
+# WebFlux 函数式端点（无注解路由）：
+# RouterFunctions.route()/SpringdocRouteBuilder.route() 链式 DSL
+#   .GET("/path", this::handler [, ops -> ...]).POST(...).build()
+# 标准 Spring 形态：
+#   RouterFunctions.route(RequestPredicates.GET("/path"), handler::h)
+#     .andRoute(RequestPredicates.POST("/x"), handler::p)
+_WEBFLUX_VERBS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
+# 动词("路径", [接收者::]处理器) —— 处理器是第 2 个实参，方法引用或 this::
+_WEBFLUX_CHAIN_RE = re.compile(
+    r"\b(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*"
+    r'"((?:[^"\\]|\\.)*)"(?:\s*[^,()]*)?\s*,\s*'
+    r'(?:([A-Za-z_]\w*)::)?([A-Za-z_]\w*)\s*[,)]'
+)
+# route/andRoute(RequestPredicates.VERB("路径") ..., 处理器引用)
+_WEBFLUX_PRED_RE = re.compile(
+    r"(?:\bandRoute|\broute)\s*\(\s*RequestPredicates\.\w+\s*\(\s*"
+    r'"((?:[^"\\]|\\.)*)"\s*\)[^,]*?,\s*'
+    r'(?:([A-Za-z_]\w*)::)?([A-Za-z_]\w*)\s*[,)]'
+)
+
+
+def scan_functional_routes(classes, by_simple):
+    """收集 WebFlux RouterFunction 函数式路由（halo 这类项目几乎没有 @RestController）。
+
+    入口判定：方法返回 RouterFunction，或方法体里有 RouterFunctions.route() /
+    *RouteBuilder.route() DSL。
+    类前缀：implements CustomEndpoint 的（halo 约定），前缀 /apis/{groupVersion}，
+    groupVersion 可在本类覆盖（GroupVersion.parseAPIVersion("g/v")），
+    默认 api.console.halo.run/v1alpha1；普通 RouterFunction 类无前缀。
+    处理器 this::method 落本类；field::method 按字段声明类型落类。
+    """
+    out = []
+    for c in classes.values():
+        if c.get("kind") != "class":
+            continue
+        is_custom_ep = any(impl_name.split("<")[0].split(".")[-1] == "CustomEndpoint"
+                           for impl_name in c.get("implements", []))
+        # halo 约定的分组前缀
+        prefix = ""
+        if is_custom_ep:
+            gv = "api.console.halo.run/v1alpha1"
+            for m in c["methods"]:
+                if m["name"] == "groupVersion" and m.get("body_raw"):
+                    gm = re.search(r'parseAPIVersion\(\s*"([^"]+)"', m["body_raw"])
+                    if gm:
+                        gv = gm.group(1)
+                        break
+            prefix = "/apis/" + gv
+        for m in c["methods"]:
+            body = m.get("body_raw") or ""
+            rtype = m.get("ret_type") or ""
+            if "RouterFunction" not in rtype and not re.search(
+                    r"RouterFunctions\.route|RouteBuilder\.route\(\)", body):
+                continue
+            found = []
+            for vm in _WEBFLUX_CHAIN_RE.finditer(body):
+                verb, path, ref_obj, ref_m = vm.groups()
+                if verb not in _WEBFLUX_VERBS:
+                    continue
+                found.append((verb, path, ref_obj, ref_m))
+            for vm in _WEBFLUX_PRED_RE.finditer(body):
+                # 谓词形态拿不到 HTTP 动词名（RequestPredicates.xxx 在正则里没收组），
+                # 统一标 ANY 太宽泛——补抓一次紧邻的谓词动词
+                seg = body[max(0, vm.start() - 40):vm.end()]
+                vg = re.search(r"RequestPredicates\.(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*$",
+                               seg.replace("\n", " "))
+                verb = vg.group(1) if vg else "GET"
+                found.append((verb, vm.group(1), vm.group(2), vm.group(3)))
+            for verb, path, ref_obj, ref_m in found:
+                owner = c["name"]
+                if ref_obj and ref_obj != "this":
+                    ftype = (c.get("fields") or {}).get(ref_obj)
+                    if ftype:
+                        owner = ftype
+                full = (prefix.rstrip("/") + "/" + path.lstrip("/")).rstrip("/") or "/"
+                # 处理器在别的 bean（field::m）：controller 直接落 handler 所在类，
+                # 逆向索引按 (controller, handler) 匹配图节点，否则对不上
+                out.append({"method": verb, "path": full,
+                            "controller": owner, "handler": ref_m,
+                            "handler_owner": None})
+    return out
+
+
 def cool_class_prefix(c):
     """cool-admin 专有约定推导（AutoPrefixUrlMapping）：
     @CoolRestController 没写 value 且包名含 modules 时——
@@ -2633,7 +2955,9 @@ def main():
     _BRIDGE = _run_java_bridge(ROOT)
     if _BRIDGE:
         _BRIDGE_CALLS = _apply_bridge(by_simple, _BRIDGE)
-        print(f"JavaParser 桥接已启用（{len(_BRIDGE)} 类，{len(_BRIDGE_CALLS)} 条调用接收者）")
+        tag = "缓存" if _BRIDGE_CACHED else "已启用"
+        jar_part = f"，Maven 依赖 {_BRIDGE_MAVEN_JARS} 个 jar" if _BRIDGE_MAVEN_JARS else ""
+        print(f"JavaParser 桥接{tag}（{len(_BRIDGE)} 类，{len(_BRIDGE_CALLS)} 条调用接收者{jar_part}）")
     else:
         _BRIDGE_CALLS = {}
 
@@ -2689,6 +3013,10 @@ def main():
         c["_service_generic"] = service_impl_types(c, by_simple)
         if not c.get("base_entity") and c.get("is_mapper"):
             c["base_entity"] = mapper_base_entity(c, by_simple)
+
+    # ActiveRecord + 充血领域模型：假表名纠正、_ar 表/专属mapper、_is_domain
+    # （依赖 base_entity 已折完，必须在调用图构建之前）
+    ar_and_domain_precompute(classes, by_simple)
 
     def resolve_impl(type_simple):
         impl_name = impl_of.get(type_simple)
@@ -2779,6 +3107,10 @@ def main():
                     emit_route(meth, par)
                     own_names.add(meth["name"])  # 再上层祖父类同名方法不重复收
             pc = par
+    # WebFlux 函数式路由（RouterFunction DSL；halo 这类 reactive 项目的主力形态）
+    froutes = scan_functional_routes(classes, by_simple)
+    if froutes:
+        routes.extend(froutes)
     routes.sort(key=lambda r: (r["path"], r["method"]))
 
     # 调用图 + 事务闭包（继承父类 handler 的路由按子类视角补建节点）
@@ -2788,7 +3120,8 @@ def main():
     tx_seeds, tx_inside = tx_closure(graph, by_simple, impl_of)
 
     # 实体 -> 表 -> SQL 联动
-    entities = [c for c in classes.values() if c["is_entity"]]
+    # 充血领域模型（_is_domain）映射的是祖先实体的同一张表，不作为独立表结构重复列出
+    entities = [c for c in classes.values() if c["is_entity"] and not c.get("_is_domain")]
     # mapper -> 实体
     mapper_entity = {}
     for mp in mappers:
