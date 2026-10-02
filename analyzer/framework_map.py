@@ -22,6 +22,8 @@ import os
 import re
 import sys
 import json
+import subprocess
+import tempfile
 from datetime import datetime
 
 try:
@@ -34,6 +36,115 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(SCRIPT_DIR, "framework_map.md")
 OUT_JSON = os.path.splitext(OUT)[0] + ".json"
 JAVA_SRC = os.path.join(ROOT, "src", "main", "java")
+
+# ---------------------------------------------------------------------------
+# 可选 JavaParser 桥接后端（纯正则之外的增强，不是替代品）
+# Java 可用且 analyzer/java-bridge/out 下有编译产物时自动启用；
+# 任何一步失败都静默回退纯正则模式。显式关掉：设 CG_NO_BRIDGE=1
+# ---------------------------------------------------------------------------
+_BRIDGE = None        # {fqn: 桥接类数据}
+_BRIDGE_CALLS = None  # {(类fqn, 方法名, scope尾段, 调用名): 接收者类型简单名}
+
+
+def _simple_of(fqn_type):
+    """com.foo.Bar<com.foo.Baz> -> Bar；类型变量/原始类型原样返回"""
+    if not fqn_type:
+        return ""
+    head = fqn_type.split("<", 1)[0].strip()
+    return head.rsplit(".", 1)[-1]
+
+
+def _run_java_bridge(root):
+    """跑 JavaParser 桥接器，返回 {fqn: cls}；不可用/失败返回 None"""
+    if os.environ.get("CG_NO_BRIDGE"):
+        return None
+    bridge_dir = os.path.join(SCRIPT_DIR, "java-bridge")
+    out_dir = os.path.join(bridge_dir, "out")
+    lib_dir = os.path.join(bridge_dir, "lib")
+    if not (os.path.isfile(os.path.join(out_dir, "JavaBridge.class")) and os.path.isdir(lib_dir)):
+        return None
+    jars = [os.path.join(lib_dir, f) for f in os.listdir(lib_dir) if f.endswith(".jar")]
+    if not jars:
+        return None
+    cp = os.pathsep.join(jars + [out_dir])
+    try:
+        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+        tmp.close()
+        r = subprocess.run(["java", "-cp", cp, "JavaBridge", root, tmp.name],
+                           capture_output=True, timeout=600)
+        if r.returncode != 0:
+            return None
+        with open(tmp.name, encoding="utf-8") as f:
+            data = json.load(f)
+        os.unlink(tmp.name)
+        return {c["fqn"]: c for c in data.get("classes", [])}
+    except Exception:
+        return None
+
+
+def _apply_bridge(by_simple, bridge):
+    """桥接数据补强正则解析结果（桥接是地面真值，但只在正则有缺口处补）：
+    1. extends_heads 泛型实参正则折不动的，用桥接 resolved 值换
+    2. field_full 字段类型用桥接 resolved 补强（全限定名取简单名）
+    返回桥接调用索引 {(fqn, method, scope尾段, call): recv简单名}
+    """
+    calls_idx = {}
+    for fqn, bc in bridge.items():
+        cls = by_simple.get(bc["name"])
+        if not cls:
+            continue
+        # 1. extends 泛型实参补强：正则 extends_heads 里的实参还是本类裸形参，
+        #    桥接 resolved 里是具体类型时换掉（extends Base<T> 这种桥接也解不出，跳过）
+        own_params = set(cls.get("type_params") or [])
+        for i, (root, args) in enumerate(cls.get("extends_heads") or []):
+            for be in bc.get("extends", []):
+                if _simple_of(be.get("resolved", "")) != root:
+                    continue
+                resolved_args = [_simple_of(a) for a in _bridge_type_args(be.get("resolved", ""))]
+                if resolved_args and not any(a in own_params for a in resolved_args):
+                    cls["extends_heads"][i] = (root, resolved_args)
+        # 2. 字段类型补强：field_full 是 field_type_of 的数据源（正则拿的是声明原文，
+        #    可能是全限定名/泛型变量），桥接 resolved 是符号求解后的具体类型
+        for bf in bc.get("fields", []):
+            rt = bf.get("resolved", "")
+            if rt and bf["name"] in (cls.get("field_full") or {}):
+                simple = _simple_of(rt)
+                if simple and simple != "Object" and simple in by_simple:
+                    cls["field_full"][bf["name"]] = simple
+                    cls["fields"][bf["name"]] = simple
+        # 3. 调用接收者索引：scope 取尾段标识符（this.userService -> userService）
+        for m in bc.get("methods", []):
+            for call in m.get("calls", []):
+                rt = call.get("recv_type") or ""
+                if not rt:
+                    continue
+                scope_tail = call.get("scope", "").rsplit(".", 1)[-1].strip()
+                key = (fqn, m["name"], scope_tail, call["name"])
+                if key not in calls_idx:
+                    calls_idx[key] = _simple_of(rt)
+    return calls_idx
+
+
+def _bridge_type_args(resolved):
+    """com.foo.Base<com.foo.A, com.foo.B> -> ['com.foo.A', 'com.foo.B']（顶层逗号切分）"""
+    lt = resolved.find("<")
+    if lt < 0 or not resolved.endswith(">"):
+        return []
+    inner = resolved[lt + 1:-1]
+    args, depth, cur = [], 0, []
+    for ch in inner:
+        if ch == "<":
+            depth += 1
+        elif ch == ">":
+            depth -= 1
+        if ch == "," and depth == 0:
+            args.append("".join(cur).strip())
+            cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        args.append("".join(cur).strip())
+    return args
 RESOURCES = os.path.join(ROOT, "src", "main", "resources")
 # 跟 application.yml 里 mybatis-plus.mapper-locations: classpath*:mapper/**/*.xml 对齐
 XML_MAPPER_DIRS = [os.path.join(RESOURCES, "mapper")]
@@ -2122,6 +2233,21 @@ def resolve_callees(target, mname, by_simple, impl_of):
         ltype = local_type(field)
         if ltype and local_type_ok(ltype):
             emit(ltype, cmethod, True)
+            continue
+        # JavaParser 桥接兜底：正则两条路（字段表/局部变量）都解不出时，
+        # 用符号求解的接收者类型。只认 mapper/service——DTO getter 这类
+        # 数据对象调用不是链路，收进来全是噪音边；枚举也排掉（枚举 implement
+        # 接口会被 impl_of 误归一化成"实现类"，ResultCode#getCode 不是链路）
+        if _BRIDGE_CALLS:
+            bt = _BRIDGE_CALLS.get((target.get("fqn", ""), mname, field, cmethod))
+            if bt:
+                bcls = by_simple.get(bt)
+                # 接口会被 emit 归一化到实现类，枚举 implement 接口时会被误归——
+                # 检查归一化后的目标，枚举不是链路节点
+                final_cls = by_simple.get(impl_of.get(bt, bt))
+                if (bcls and (bcls["is_mapper"] or bcls["is_service_impl"] or bcls["kind"] == "interface")
+                        and (not final_cls or final_cls["kind"] != "enum")):
+                    emit(bt, cmethod, False)
         # 都查不到：静态调用/运行期才解析的接收者，不追
 
     # 链式调用 userService.getService().listUsers()：CALL_RE 收不到尾方法，
@@ -2501,6 +2627,15 @@ def main():
         if info:
             classes[info["fqn"]] = info
             by_simple[info["name"]] = info
+
+    # 可选 JavaParser 桥接：正则结果建好后，用符号求解补强
+    global _BRIDGE, _BRIDGE_CALLS
+    _BRIDGE = _run_java_bridge(ROOT)
+    if _BRIDGE:
+        _BRIDGE_CALLS = _apply_bridge(by_simple, _BRIDGE)
+        print(f"JavaParser 桥接已启用（{len(_BRIDGE)} 类，{len(_BRIDGE_CALLS)} 条调用接收者）")
+    else:
+        _BRIDGE_CALLS = {}
 
     # 跨类常量互拼折叠：SQL_A = "..." + Other.SQL_B（全局不动点，按 import 简单名查）
     progress = True

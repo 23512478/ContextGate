@@ -130,6 +130,7 @@ python mcp-server/test_mcp.py
 - **SQL 常量支持字面量拼接、同类互拼折叠与跨类互拼**（`SQL_A = "..." + Other.SQL_B`，全局不动点折叠）；**方法内局部 `final String`（及单赋值 String）片段同样折叠**——`final String w = " WHERE ..."; String sql = "SELECT ..." + w` 与 jdbc 首参直接 `"..." + w` 都能还原全文（定义先后不限，不动点收敛）；**右值拼入方法参数/方法返回值等真运行期值不再整块丢弃**（`"..." + userId`、`"..." + user.getId()`、拼进局部变量再整变量传参）——静态不可知的片段降级为 `?` 占位，SQL 骨架保留，表/列归因照常，记录带 `has_runtime_param` 标记并在输出里提示"含运行期拼参"；仍拿不到：`?` 位置上的运行期**值本身**（那只有运行起来才知道）
 - **MBG `Example` 动态条件**：criteria 分组语义已还原——`createCriteria()` 开 AND 组、`or()` 开 OR 组（含 `example.or().andXxx()` 匿名组），多组时带括号、组间按连接词连接；Example 作方法参数传入时调用方条件经传播归并（方法名不限，按 Example 参数类型识别；与 Wrapper 一样沿调用链多跳传播，互传/自环有收敛防护）；Example 条件为空时不再崩溃（`_example_defuse` 返回值解包修复）
 - **ServiceImpl 内置方法外部调用**：`areaService.save()` / `orderService.getById()` 等通过接口调用的内置方法（`save`/`getById`/`list`/`update` 等），当目标方法体不在接口中声明时，现在沿 `_service_generic` 泛型绑定直接合成 mapper 边，不再断链（第七轮修复，mall4j 可达率 52%→98%）
+- **可选 JavaParser 桥接后端**：纯正则之外的真 AST 增强（不是替代品）——`analyzer/java-bridge/` 下有一个单文件 Java 桥接器，基于 JavaParser 符号求解器输出类结构 JSON。Java 可用且桥接器已编译时自动启用，失败静默回退纯正则（设 `CG_NO_BRIDGE=1` 显式关闭）。补强三个点：① extends 泛型实参（桥接 resolved 全限定名，正则折不动的嵌套/多层绑定）；② 字段类型（field_full 从声明原文换成符号求解后的具体类型）；③ 调用接收者兜底（正则两条路都解不出时，用符号求解的 recv_type，只认 mapper/service，DTO/枚举不收）。实测 AgileBoot 逆向索引 13→36（DDD 模式提升最大），mall4j +1 边，RuoYi-Vue/youlai-boot 零差异（传统三层正则已够准）
 
 ## 参与进来
 
