@@ -1935,6 +1935,13 @@ def resolve_callees(target, mname, by_simple, impl_of):
                 decl_cls = c2  # 方法体里的签名/局部变量类型都在这个类的命名空间
                 break
     if method is None:
+        # ServiceImpl<M,T> 继承的内置方法（save/getById/list 等）：方法体在框架 jar
+        # 里扫不到，但语义上就是 mapper 的对应内置方法——直接合成 mapper 边。
+        # 被本类/父类重写的不会走到这里（前面已命中）。
+        svc_g = target.get("_service_generic")
+        if svc_g and mname in _SERVICE_BUILTIN_MAP:
+            mapped = _SERVICE_BUILTIN_MAP[mname]
+            return [("mapper", svc_g[0], mapped, mapped in MP_WRITE)]
         return []
 
     # 从 target 视角折出的泛型绑定：父类里的 T/M 在子类可能已是具体类型。
