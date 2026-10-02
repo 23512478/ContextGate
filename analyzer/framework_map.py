@@ -901,7 +901,7 @@ def _example_defuse(owner, body, ent_by_simple, table_to_entity, seed_text="", p
         return [], props
     ent = ent_by_simple.get(ent_m.group(1))
     if not ent or not ent.get("entity_columns"):
-        return []
+        return [], props
     ecols, table = ent["entity_columns"], ent["table_name"]
     ent_name = ent["name"]
     example_vars = {m.group(2) for m in
@@ -954,7 +954,7 @@ def _example_defuse(owner, body, ent_by_simple, table_to_entity, seed_text="", p
 
     conds = [c for g in groups for c in g["conds"]]
     if not conds:
-        return []
+        return [], props
     seg_list = []
     multi = sum(1 for g in groups if g["conds"]) > 1
     for g in groups:
