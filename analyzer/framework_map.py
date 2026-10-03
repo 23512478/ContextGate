@@ -247,8 +247,10 @@ MAPPING_ANN = {
     "PostResource": "POST",
 }
 # 没有 HTTP 入口、但会被框架“悄悄调用”的隐藏入口
-HIDDEN_ANN = ["Scheduled", "KafkaListener", "RabbitListener", "RocketMQMessageListener",
-              "EventListener", "PostConstruct", "Around", "Before", "After", "AfterReturning"]
+HIDDEN_ANN = ["Scheduled", "XxlJob", "KafkaListener", "KafkaHandler",
+              "RabbitListener", "RabbitHandler", "RocketMQMessageListener",
+              "StreamListener", "EventListener", "PostConstruct",
+              "Around", "Before", "After", "AfterReturning"]
 # MyBatis-Plus BaseMapper / IService 的内置方法（不需要写 SQL 的那种）
 MP_BUILTIN = {
     "insert", "deleteById", "deleteByIds", "deleteByMap", "delete", "updateById", "update",
@@ -1926,8 +1928,10 @@ TABLE_FIELD_RE = re.compile(
     r'@TableField\(\s*(?:value\s*=\s*)?"([^"]+)"\s*\)\s*'
     rf"(?:private|protected|public)\s+{_TYPE}\s+(\w+)\s*;"
 )
-# 方法体里的 field.method( 调用
-CALL_RE = re.compile(r"(?<![\w.])([a-z]\w*)\.([a-z]\w*)\s*\(")
+# 方法体里的 field.method( 调用。接收者与点之间允许空白（含换行）——
+# yudao 长接收者名常换行：auxiliaryItemService\n  .getXxx(...)，旧版不允许
+# 空格会整片漏掉这类调用
+CALL_RE = re.compile(r"(?<![\w.])([a-z]\w*)\s*\.([a-z]\w*)\s*\(")
 # 链式调用 userService.getService().listUsers()：CALL_RE 的 recv 只认单标识符，
 # 尾方法（真正想追的目标）在这里被丢掉。中转每节是 getter（可带参，返回类型写在
 # 方法签名 ret_type 里），可静态逐节解析；节内 [^()]* / \s* 均线性，无嵌套量词。
