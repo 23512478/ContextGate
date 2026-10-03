@@ -129,16 +129,18 @@ def _run_java_bridge(root):
             pass
     _BRIDGE_CACHED = False
 
+    # 默认 1800 秒：6482 文件的 yudao 8 线程实测约 1128 秒，600 秒必被杀；
+    # 实在等不及可用 CG_BRIDGE_TIMEOUT 调小（超时就静默回退纯正则）
+    timeout_s = int(os.environ.get("CG_BRIDGE_TIMEOUT") or 1800)
+    tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
+    tmp.close()
     try:
-        tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False)
-        tmp.close()
         r = subprocess.run(["java", "-cp", cp, "JavaBridge", root, tmp.name],
-                           capture_output=True, timeout=600)
+                           capture_output=True, timeout=timeout_s)
         if r.returncode != 0:
             return None
         with open(tmp.name, encoding="utf-8") as f:
             data = json.load(f)
-        os.unlink(tmp.name)
         classes = data.get("classes", [])
         _BRIDGE_MAVEN_JARS = (data.get("meta") or {}).get("maven_jars", 0)
         # 写缓存（失败无所谓，下次重跑而已）
@@ -158,6 +160,11 @@ def _run_java_bridge(root):
         return {c["fqn"]: c for c in classes}
     except Exception:
         return None
+    finally:
+        try:
+            os.unlink(tmp.name)  # 超时/失败也不留临时文件
+        except OSError:
+            pass
 
 
 def _apply_bridge(by_simple, bridge):
