@@ -256,6 +256,17 @@ def trace_call(query: str, project: str = "") -> str:
                 if child in path:
                     out_lines.append(f"{prefix}  ├─ {edge['class']}#{edge['method']}  ↩ 循环，截断")
                     continue
+                # Feign 跨服务边界：调用端打契约（服务名+HTTP 路径），
+                # 服务端打入口标记，链继续往实现类里钻
+                ekind = edge.get("kind")
+                if ekind == "feign":
+                    contract = f"{edge.get('http_method') or ''} {edge.get('http_path') or '(路径未知)'}".strip()
+                    out_lines.append(
+                        f"{prefix}  ├─ 🌐 Feign 跨服务 → {edge.get('service', '?')} `{contract}`")
+                elif ekind == "feign_server":
+                    out_lines.append(
+                        f"{prefix}  ├─ 🛂 服务端 HTTP 入口（Feign 接口 {edge.get('feign_interface', '?')}"
+                        f" @ {edge.get('service', '?')}）")
                 wtag = " ✍️写" if edge.get("is_db_write") else ""
                 if wtag and not smap.get(child, {}).get("sql"):
                     pass  # MP 内置写，显示 ✍️

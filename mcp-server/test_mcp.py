@@ -510,6 +510,30 @@ def main():
                and "WidgetMapper#selectList" in out_widget_page, \
             "GET 类继承路由同样应沿泛型绑定接通到 MP 内置 Mapper 方法"
 
+        # 7.53 Feign 跨服务边：调用方 →(🌐) Feign 接口 →(🛂) 服务端实现 → Mapper。
+        #      服务名/路径全靠三层常量链折叠（RpcConstants→ApiConstants→XxxApi）
+        out_feign = call_tool(proc, "trace_call",
+                              {"query": "GET /api/v1/feign/user"})
+        assert "🌐 Feign 跨服务" in out_feign and "demo-server" in out_feign, \
+            "Feign 调用点应打出跨服务标记和折叠出的服务名"
+        assert "GET /rpc-api/demo/user/get" in out_feign, \
+            "三层常量链应折叠出完整 Feign 路径"
+        assert "RemoteUserApiImpl#getUser" in out_feign \
+               and "UserMapper#selectById" in out_feign, \
+            "同仓有 @RestController 实现时链应继续钻进服务端实现到 Mapper"
+        # 服务端 rpc-api 路由本身也要能追（mapping 全在接口上、实现类只有 @Override）
+        out_rpc = call_tool(proc, "trace_call",
+                            {"query": "GET /rpc-api/demo/user/get"})
+        assert "RemoteUserApiImpl#getUser" in out_rpc \
+               and "UserMapper#selectById" in out_rpc, \
+            "接口契约路由（feign-contract）应注册并可追到实现类下游"
+        # 逆向索引：User 实体的影响面应同时包含本端入口和远程 rpc-api 入口
+        # （selectById 是 MP 内置，其上游路由经 feign/feign_server 两跳反查得到）
+        out_impact = call_tool(proc, "impact", {"entity": "User"})
+        assert "/api/v1/feign/user" in out_impact \
+               and "/rpc-api/demo/user/get" in out_impact, \
+            "跨服务边应让 Mapper 逆向索引同时覆盖本端与远程 RPC 入口"
+
         # 8. refresh_map（真实重跑分析器，结果写回 demo 地图）
         print("\n" + "=" * 70)
         print(f"### refresh_map('{PROJECT}')")

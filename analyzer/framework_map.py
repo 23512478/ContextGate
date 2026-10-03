@@ -303,6 +303,40 @@ SQL_ANN = {"Select": "SELECT", "Update": "UPDATE", "Insert": "INSERT", "Delete":
 
 # ---------------------------------------------------------------- 基础工具
 
+def strip_comments(src):
+    """只抹注释（// 和块注释），字符串字面量原样保留——接口常量扫描用：
+    常量前常挂 javadoc，不抹掉会让 (?:^|;) 边界匹配失败。"""
+    out = list(src)
+    i, n = 0, len(src)
+    while i < n:
+        if src[i] == '"' or src[i] == "'":
+            q = src[i]
+            i += 1
+            while i < n and src[i] != q:
+                i += 2 if src[i] == "\\" and i + 1 < n else 1
+            i += 1
+            continue
+        two = src[i:i + 2]
+        if two == "//":
+            while i < n and src[i] != "\n":
+                out[i] = " "
+                i += 1
+            continue
+        if two == "/*":
+            out[i] = out[i + 1] = " "
+            i += 2
+            while i < n and src[i:i + 2] != "*/":
+                if src[i] != "\n":
+                    out[i] = " "
+                i += 1
+            if i < n:
+                out[i] = out[i + 1] = " "
+                i += 2
+            continue
+        i += 1
+    return "".join(out)
+
+
 def strip_code(src):
     """把注释和字符串字面量原地替换成等长空白。
     替换后位置和原文一一对应，方便“干净文本定位、原始文本取内容”。"""
@@ -813,6 +847,66 @@ def _render_concat(atoms, resolve_id):
 # 类级 static String 常量（static final / final static）：JdbcTemplate 常把 SQL 抽成常量字段
 _STATIC_STR_DECL_RE = re.compile(
     r"\b(?:static\s+(?:final\s+)?|final\s+static\s+)String\s+(\w+)\s*=")
+# 接口里的 String X = ... 隐式 public static final（Feign 路径常量全是这形态：
+# yudao RpcConstants 接口里直接写 String RPC_API_PREFIX = "/rpc-api"）。
+# 调用前方法体已被整块抹白：开头（类括号变空格）或上一个字段的分号后就是顶层常量
+_STATIC_STR_IFACE_RE = re.compile(
+    r"(?:^|;)[\s]*"
+    r"(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:final\s+)?String\s+(\w+)\s*=")
+
+
+def _mask_brace_blocks(text):
+    """把 { ... } 块整体抹成空格（字符串/字符字面量里的括号不算）。
+    接口里只有 default/static 方法才有方法体，抹掉后剩下的顶层 String 声明
+    必然是接口常量，不会把方法内局部变量误收。"""
+    out = list(text)
+    i, n = 0, len(text)
+    in_str = in_chr = False
+    while i < n:
+        ch = text[i]
+        if in_str:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                in_str = False
+        elif in_chr:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == "'":
+                in_chr = False
+        elif ch == '"':
+            in_str = True
+        elif ch == "'":
+            in_chr = True
+        elif ch == "{":
+            depth = 1
+            j = i + 1
+            while j < n and depth:
+                c2 = text[j]
+                if c2 == '"' or c2 == "'":
+                    # 块内出现字符串，朴素跳过到配对引号（路径常量不会在方法体里）
+                    q = c2
+                    j += 1
+                    while j < n and text[j] != q:
+                        j += 1 if text[j] != "\\" else 2
+                elif c2 == "{":
+                    depth += 1
+                    j += 1
+                elif c2 == "}":
+                    depth -= 1
+                    j += 1
+                else:
+                    j += 1
+            for k in range(i, min(j, n)):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+            continue
+        i += 1
+    return "".join(out)
+
 
 
 def _join_sql_literal(s):
@@ -820,13 +914,15 @@ def _join_sql_literal(s):
                   .replace(r"\'", "'")).strip()
 
 
-def _static_str_fields(body_raw):
+def _static_str_fields(body_raw, interface_mode=False):
     """扫类级 static String 常量，返回 {name: [token, ...]}，
     token = ("lit", 文本) | ("id", 标识符)。
     右值取到字符串外的首个 ';'；出现方法调用等非「字面量/标识符/+」成分即放弃
-    （运行期拼接静态拿不到）。跨类引用在消费点解析，这里只收 token。"""
+    （运行期拼接静态拿不到）。跨类引用在消费点解析，这里只收 token。
+    interface_mode：接口常量没有 static/final 修饰符（调用方应先抹掉方法体）。"""
     out = {}
-    for dm in _STATIC_STR_DECL_RE.finditer(body_raw):
+    decl_re = _STATIC_STR_IFACE_RE if interface_mode else _STATIC_STR_DECL_RE
+    for dm in decl_re.finditer(body_raw):
         i, n = dm.end(), len(body_raw)
         tokens, buf, in_str = [], [], False
         while i < n:
@@ -1305,10 +1401,13 @@ def scan_inline_sql(classes, by_simple, table_to_entity):
             local_str = {}
 
             def _const_ref(val):
-                """类常量引用 Foo.BAR / 本类 BAR → 常量文本，查不到 None"""
+                """类常量引用 Foo.BAR / 本类 BAR → 常量文本，查不到 None。
+                按 import 找归属类（多模块同名类碰撞时 by_simple 会指错）"""
                 if "." in val:
                     ocls, ofield = val.rsplit(".", 1)
-                    return (by_simple.get(ocls) or {}).get("static_strs", {}).get(ofield)
+                    other = (classes.get(ocls)
+                             or _resolve_const_owner(c, ocls.split(".")[-1], classes, by_simple))
+                    return (other or {}).get("static_strs", {}).get(ofield)
                 return c.get("static_strs", {}).get(val)
 
             def _id_text(name):
@@ -1869,6 +1968,12 @@ def parse_java(path):
     pkg_m = re.search(r"package\s+([\w.]+)\s*;", clean)
     pkg = pkg_m.group(1) if pkg_m else ""
 
+    # import 简单名 -> 全限定名：多模块项目同名类碰撞（yudao 每个模块都有
+    # ApiConstants，by_simple 简单名空间会互相覆盖），跨类常量折叠按它找对的类
+    imports = {m.group(1).rsplit(".", 1)[-1]: m.group(1)
+               for m in re.finditer(r"import\s+(?!static\b)([\w.]+)\s*;", clean)
+               if not m.group(1).endswith(".*")}
+
     cm = CLASS_RE.search(clean)
     if not cm:
         return None
@@ -1937,7 +2042,15 @@ def parse_java(path):
     # 类级 static String 常量的字符串值：必须在 body_raw 上收（body_clean 里字面量已被抹白）。
     # 右值支持字面量拼接与同类常量互拼（SQL_A + "x"），迭代折叠到不动点；环/未知标识符放弃
     static_strs = {}
-    pending = _static_str_fields(body_raw)
+    # 接口的 String 常量不带 static/final（隐式的）：先抹注释（常量上常挂 javadoc）
+    # 再抹 default/static 方法体，剩下的顶层 String 声明都是常量——
+    # yudao 所有 Feign 路径常量都靠这条链折叠。
+    # 注意 body_raw 自带最外层 {}，只对内部文本做块抹除，否则整个类体都会被抹掉
+    if kind == "interface":
+        const_src = _mask_brace_blocks(strip_comments(body_raw[1:-1]))
+    else:
+        const_src = body_raw
+    pending = _static_str_fields(const_src, interface_mode=(kind == "interface"))
     progress = True
     while pending and progress:
         progress = False
@@ -2017,11 +2130,13 @@ def parse_java(path):
         m_ann_raw = raw[body_start + mi["ann_start"]: body_start + mi["name_start"]]
         # 路由
         http = None
+        http_ann = None
         for ann, verb in MAPPING_ANN.items():
             if re.search(r"@" + ann + r"\b", m_ann_raw):
                 args = ann_args(m_ann_raw, ann)
                 route_path = route_path_from_args(args) if args else ""
                 http = (verb, route_path)
+                http_ann = ann
                 break
         sql = extract_sql(m_ann_raw)
         hidden = [a for a in HIDDEN_ANN if re.search(r"@" + a + r"\b", m_ann_raw)]
@@ -2075,6 +2190,7 @@ def parse_java(path):
             "ret_type": (mi.get("header") or "").split()[-1] if mi.get("header") else "",
             "ann_raw": m_ann_raw,
             "http": http,
+            "http_ann": http_ann,
             "sql": sql,
             "hidden": hidden,
             "calls": calls,
@@ -2091,6 +2207,7 @@ def parse_java(path):
         "fqn": fqn,
         "name": cname,
         "pkg": pkg,
+        "imports": imports,
         "kind": kind,
         "type_params": type_params,
         "extends": extends,
@@ -2103,6 +2220,10 @@ def parse_java(path):
         "static_pending": static_pending,
         "methods": methods,
         "class_ann": class_ann,
+        # @FeignClient(name="x" [, path="/y"])：跨服务调用契约。参数原文留到 main
+        # 阶段（常量折叠后）再解——name/path 经常写成 ApiConstants.NAME 这种常量引用
+        "feign_args": (ann_args(head_raw, "FeignClient")
+                       if re.search(r"@FeignClient\b", class_ann) else None),
         "file": path,
         "table_name": table_name,
         "table_explicit": table_explicit,
@@ -2262,6 +2383,11 @@ def resolve_callees(target, mname, by_simple, impl_of):
         if fcls and fcls["is_mapper"]:
             is_write = cmethod in MP_WRITE or _sql_kind(by_simple, ftype, cmethod) in ("UPDATE", "INSERT", "DELETE")
             out.append(("mapper", ftype, cmethod, is_write))
+        elif fcls and fcls.get("_feign") and cmethod in fcls["_feign"]["methods"]:
+            # Feign 接口的契约方法：这是跨服务 HTTP 调用，边落在接口节点上
+            # （build_call_graph 再合成 接口 → 服务端实现类 的落点边），
+            # 不能直接归一化到实现类——那会把网络边界抹掉
+            out.append(("feign", ftype, cmethod, False))
         elif fcls and (fcls["kind"] == "interface" or fcls["is_service_impl"]) and (ftype.endswith("Service") or _impl_of(ftype, impl_of)):
             # 归一化到实现类：图节点只建在 class 上，接口会导致逆向 BFS 断链
             impl_name = impl_of.get(ftype) or ftype
@@ -2651,7 +2777,228 @@ def ar_and_domain_precompute(classes, by_simple):
         cls["_is_domain"] = bool(cls.get("table_name")) and _has_collaborator(cls, by_simple)
 
 
-def build_call_graph(classes, by_simple, impl_of, inherited_routes=()):
+# ------------------------------------------------------------- Feign 跨服务调用
+def _take_top_level_expr(text, start):
+    """从 start 取到顶层逗号/结尾（跳过括号配对和字符串），返回去空白表达式。"""
+    depth = 0
+    in_str = None
+    i, n = start, len(text)
+    while i < n:
+        ch = text[i]
+        if in_str:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == in_str:
+                in_str = None
+        elif ch in "\"'":
+            in_str = ch
+        elif ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            break
+        i += 1
+    return text[start:i].strip()
+
+
+def _ann_attr_expr(args, *names):
+    """取注解命名属性的原始表达式（path = PREFIX + "/x"），没有返回 None。"""
+    if not args:
+        return None
+    pat = r"\b(?:" + "|".join(map(re.escape, names)) + r")\s*=\s*"
+    m = re.search(pat, args)
+    return _take_top_level_expr(args, m.end()) if m else None
+
+
+def _ann_first_expr(args):
+    """第一个位置参数（隐式 value）；第一段若是命名属性（name=...）则返回 None。"""
+    if not args:
+        return None
+    seg = _take_top_level_expr(args, 0)
+    return None if re.match(r"^[\w.]+\s*=", seg) else seg
+
+
+def _resolve_const_owner(owner_cls, simple, classes, by_simple):
+    """跨类常量引用的归属类：import 显式指定优先（防多模块同名碰撞，
+    yudao 十几个模块各有一个 ApiConstants），其次同包，最后简单名兜底。"""
+    fqn = (owner_cls.get("imports") or {}).get(simple)
+    if fqn and fqn in classes:
+        return classes[fqn]
+    pkg = owner_cls.get("pkg")
+    if pkg:
+        cand = pkg + "." + simple
+        if cand in classes:
+            return classes[cand]
+    return by_simple.get(simple)
+
+
+def fold_str_expr(expr, cls, by_simple, classes):
+    """全局常量折叠完成后，求注解实参里的字符串拼接值。
+    支持字面量、本类常量（PREFIX）、跨类常量（ApiConstants.PREFIX，全限定写法也行）。
+    含方法调用 / ${...} 配置占位 / 未知标识符 → None（静态不可知）。
+    yudao 三层链：RpcConstants.RPC_API_PREFIX="/rpc-api" →
+    ApiConstants.PREFIX="/rpc-api/system" → DeptApi.PREFIX="/rpc-api/system/dept"
+    → @GetMapping(PREFIX + "/get") 最终折成 /rpc-api/system/dept/get。"""
+    if expr is None:
+        return None
+    s = expr.strip()
+    # 剥外层括号（确认这对括号真的包住整个表达式）
+    while len(s) >= 2 and s[0] == "(" and s[-1] == ")":
+        depth, wraps_all = 0, True
+        for i, ch in enumerate(s):
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0 and i != len(s) - 1:
+                    wraps_all = False
+                    break
+        if not wraps_all:
+            break
+        s = s[1:-1].strip()
+
+    def resolve_id(tok):
+        if "." not in tok:
+            return (cls.get("static_strs") or {}).get(tok)
+        parts = tok.split(".")
+        # 从短到长试：ApiConstants.PREFIX（import 简单名，按 import 找对的类）
+        # / cn.iocoder...ApiConstants.PREFIX（全限定）
+        for i in range(len(parts) - 1, 0, -1):
+            head, fld = parts[i - 1], parts[i]
+            oc = (classes.get(".".join(parts[:i]))
+                  or _resolve_const_owner(cls, head, classes, by_simple))
+            v = (oc.get("static_strs") or {}).get(fld) if oc else None
+            if v is not None:
+                return v
+        return None
+
+    out, i, n = [], 0, len(s)
+    while i < n:
+        ch = s[i]
+        if ch.isspace() or ch == "+":
+            i += 1
+        elif ch == '"':
+            j, buf = i + 1, []
+            while j < n and s[j] != '"':
+                if s[j] == "\\" and j + 1 < n:
+                    buf.append(s[j:j + 2])
+                    j += 2
+                else:
+                    buf.append(s[j])
+                    j += 1
+            if j >= n:
+                return None
+            out.append(_join_sql_literal("".join(buf)))
+            i = j + 1
+        elif ch.isalpha() or ch == "_":
+            m = re.match(r"[\w$.]+", s[i:])
+            v = resolve_id(m.group(0))
+            if v is None:
+                return None
+            out.append(v)
+            i += len(m.group(0))
+        else:
+            return None  # ( 方法调用、{ 数组/${}占位、? 三元——运行期成分
+    # 常量值是 SQL 语义折叠的（+ 处插空格），URL 路径不允许，把斜杠两侧空白收掉
+    return re.sub(r"\s*/\s*", "/", "".join(out))
+
+
+def interface_http_methods(c, by_simple, classes, cache):
+    """收集接口沿 extends 链（含父接口）声明的 HTTP 方法契约。
+    返回 {mname: {verb, path(折叠后,拿不到为None), owner(声明接口), expr(原文)}}，
+    同名方法子接口覆盖父接口（BFS 先收子接口）。
+    Spring MVC 语义：@RestController implements 接口时继承「方法级」mapping；
+    接口的「类级」@RequestMapping 不继承（官方文档明确不支持），所以不拼。"""
+    if c["name"] in cache:
+        return cache[c["name"]]
+    result, order = {}, []
+    queue, seen = [c], set()
+    while queue:
+        cur = queue.pop(0)
+        if cur["name"] in seen:
+            continue
+        seen.add(cur["name"])
+        order.append(cur)
+        for head, _a in cur.get("extends_heads") or []:
+            p = by_simple.get(head)
+            if p and p["kind"] == "interface":
+                queue.append(p)
+    for dc in order:
+        for meth in dc["methods"]:
+            ann = meth.get("http_ann")
+            if not ann or meth["name"] in result:
+                continue
+            args = ann_args(meth["ann_raw"], ann)
+            raw_expr = _ann_attr_expr(args, "path", "value") or _ann_first_expr(args)
+            verb = MAPPING_ANN.get(ann, "ANY")
+            if ann == "RequestMapping":
+                vm = re.search(r"RequestMethod\.\s*(\w+)", args or "")
+                if vm:
+                    verb = vm.group(1).upper()
+            path = fold_str_expr(raw_expr, dc, by_simple, classes)
+            result[meth["name"]] = {"verb": verb, "path": path,
+                                    "owner": dc["name"],
+                                    "expr": (raw_expr or "").strip()}
+    cache[c["name"]] = result
+    return result
+
+
+def feign_precompute(classes, by_simple):
+    """识别 @FeignClient 接口，折叠跨服务调用契约，给类挂 _feign：
+    - name/contextId/value → 目标服务名（常量折叠，拿不到保留原文）
+    - path → 客户端路径前缀
+    - 方法契约沿接口继承链收集（yudao PermissionApi extends PermissionCommonApi）
+    返回 feign 注册表：{接口简单名: {service, class_path, methods: {m: (verb, path)}}}。
+    顺带把所有接口的 HTTP 契约缓存算好（服务端 Controller implements 接口要继承路由）。"""
+    http_cache = {}
+    feign = {}
+    # 接口名 → 所有实现类（impl_of 只存第一个，而 Feign 接口常有多个实现：
+    # 服务端 Controller + Fallback 熔断类，落点必须选 Controller，不能连到 Fallback）
+    implementors = {}
+    for c in classes.values():
+        if c.get("kind") == "class":
+            for iname in c.get("implements") or []:
+                implementors.setdefault(iname, []).append(c)
+    for c in list(classes.values()):
+        if c.get("feign_args") and c["kind"] == "interface":
+            fargs = c["feign_args"]
+            svc_expr = (_ann_attr_expr(fargs, "name", "contextId", "value")
+                        or _ann_first_expr(fargs))
+            svc = (fold_str_expr(svc_expr, c, by_simple, classes)
+                   or (svc_expr or "").strip())
+            cpath = fold_str_expr(_ann_attr_expr(fargs, "path"), c, by_simple, classes) or ""
+            methods = {}
+            for mname, info in interface_http_methods(
+                    c, by_simple, classes, http_cache).items():
+                p = info["path"]
+                if p is None:
+                    p = info["expr"] or None  # 动态路径：边照收，展示原文
+                full = (cpath.rstrip("/") + "/" + p.lstrip("/")).rstrip("/") if p else None
+                methods[mname] = (info["verb"], full)
+            # 服务端落点优先级：@RestController 实现 > 非 Fallback 普通类。
+            # 只剩 Fallback（熔断降级，在调用方本地执行，不是服务端）时不连，
+            # 边诚实停在接口上；降级类名单独记下用于展示
+            impls = implementors.get(c["name"], [])
+            server = next((x for x in impls if x.get("is_controller")), None)
+            if server is None:
+                server = next((x for x in impls if "fallback" not in x["name"].lower()), None)
+            fallback = None
+            if server is None:
+                fb = next((x for x in impls if "fallback" in x["name"].lower()), None)
+                fallback = fb["name"] if fb else None
+            feign[c["name"]] = {"service": svc, "class_path": cpath, "methods": methods,
+                                "server_impl": server["name"] if server else None,
+                                "fallback": fallback}
+            c["_feign"] = feign[c["name"]]
+    for c in classes.values():
+        if c["kind"] == "interface":
+            interface_http_methods(c, by_simple, classes, http_cache)
+    return feign, http_cache
+
+
+def build_call_graph(classes, by_simple, impl_of, inherited_routes=(), feign_registry=None):
     """全量调用图：key = (class, method)，value = [(kind, class, method, is_db_write)]。
     inherited_routes: (子类, 父类mapping方法名) 序列——子类继承父类 handler 的路由，
     方法体在父类但泛型实参（S/T）绑在子类，必须按子类视角解析才接得上 service/mapper。"""
@@ -2677,6 +3024,15 @@ def build_call_graph(classes, by_simple, impl_of, inherited_routes=()):
         callees = resolve_callees(c, sm, by_simple, impl_of)
         if callees:
             graph[(sc, sm)] = callees
+    # Feign 接口节点：调用方 →(feign) XxxApi#m →(feign_server) XxxApiImpl#m。
+    # 第二跳是「服务端落点」——同仓有实现类就连上（逆向 BFS 能跨服务边界追到
+    # 远程调用方），没有实现类（外部服务）边就停在接口节点，诚实 dangling。
+    if feign_registry:
+        for iname, finfo in feign_registry.items():
+            impl = finfo.get("server_impl")
+            for mname in finfo["methods"]:
+                bridge = [("feign_server", impl, mname, False)] if impl else []
+                graph.setdefault((iname, mname), bridge)
     # 补建继承来的方法节点：边指向 (子类, 父类方法名) 时，自身 methods 里没有该方法，
     # 第一轮没建 key。按继承解析补出它的下游，不动点扩到不再增长（最多沿链几层）
     while True:
@@ -2716,7 +3072,10 @@ def tx_closure(graph, by_simple, impl_of):
     stack = list(seeds)
     while stack:
         key = stack.pop()
-        for _kind, cc, cm, _w in graph.get(key, []):
+        for kind, cc, cm, _w in graph.get(key, []):
+            # Feign 两跳是 HTTP 网络边界：事务上下文不跨服务传播，不进闭包
+            if kind in ("feign", "feign_server"):
+                continue
             nxt = (cc, cm)
             if nxt not in inside:
                 inside.add(nxt)
@@ -2986,7 +3345,8 @@ def main():
                         parts.append(c["static_strs"][val])
                     elif "." in val:
                         ocls, ofield = val.rsplit(".", 1)
-                        other = by_simple.get(ocls)
+                        other = (classes.get(ocls)
+                                 or _resolve_const_owner(c, ocls, classes, by_simple))
                         t2 = (other or {}).get("static_strs", {}).get(ofield)
                         if t2:
                             parts.append(t2)
@@ -3025,6 +3385,10 @@ def main():
     # （依赖 base_entity 已折完，必须在调用图构建之前）
     ar_and_domain_precompute(classes, by_simple)
 
+    # Feign 跨服务契约：@FeignClient 接口的服务名/路径常量折叠（必须在路由收集前，
+    # 服务端 @RestController implements 接口要继承方法级 mapping 补路由）
+    feign_registry, iface_http = feign_precompute(classes, by_simple)
+
     def resolve_impl(type_simple):
         impl_name = impl_of.get(type_simple)
         return by_simple.get(impl_name) if impl_name else None
@@ -3052,6 +3416,10 @@ def main():
                    if c["is_controller"] or (c.get("kind") == "class" and is_meta_controller(c))]
     mappers = [c for c in classes.values() if c["is_mapper"]]
     routes = []
+    # 精确去重：只防同一条 (动词,路径,控制器,handler) 被收两次（自有/继承/接口契约
+    # 多条路径都可能指向同一方法）。不同 Controller 映射同一路径不能合并——
+    # yudao admin/app 双端 Controller 同路径很常见（运行期按条件加载），都是真实入口
+    route_keys = set()
     for c in controllers:
         head = _head_raw(c)
         cls_path = ""
@@ -3093,10 +3461,15 @@ def main():
             if cool_auto and base in _COOL_ALL_API and base not in (cool_apis or set()):
                 return
             full = (cls_path.rstrip("/") + "/" + path.lstrip("/")).rstrip("/") or "/"
+            key = (verb, full, c["name"], meth["name"])
+            if key in route_keys:
+                return
+            route_keys.add(key)
             routes.append({"method": verb, "path": full, "controller": c["name"],
                            "handler": meth["name"], "handler_owner": owner["name"]})
 
         # 自有方法（override 同名方法后父类 mapping 失效，以本类为准）
+        own_http_names = {m["name"] for m in c["methods"] if m["http"]}
         for meth in c["methods"]:
             if meth["http"]:
                 emit_route(meth, c)
@@ -3114,6 +3487,28 @@ def main():
                     emit_route(meth, par)
                     own_names.add(meth["name"])  # 再上层祖父类同名方法不重复收
             pc = par
+        # 接口契约路由：@RestController implements XxxApi 时继承「方法级」mapping，
+        # 哪怕注解全写在接口上、实现类只有 @Override（yudao 全家桶就是这形态）。
+        # 只收实现类自己声明了的方法（没实现的接口方法不会注册成 handler）；
+        # 实现类用自己的 mapping 重写了的方法以本类为准（own_http_names）
+        for iname in c["implements"]:
+            ic = by_simple.get(iname)
+            if not ic or ic.get("kind") != "interface":
+                continue
+            contracts = interface_http_methods(ic, by_simple, classes, iface_http)
+            via = "feign-contract" if ic.get("_feign") else "interface-contract"
+            for mname, info in contracts.items():
+                if mname not in own_names or mname in own_http_names:
+                    continue
+                if not info["path"]:
+                    continue  # 动态路径静态折不出，诚实不收
+                full = (cls_path.rstrip("/") + "/" + info["path"].lstrip("/")).rstrip("/") or "/"
+                key = (info["verb"], full, c["name"], mname)
+                if key in route_keys:
+                    continue
+                route_keys.add(key)
+                routes.append({"method": info["verb"], "path": full, "controller": c["name"],
+                               "handler": mname, "handler_owner": c["name"], "via": via})
     # WebFlux 函数式路由（RouterFunction DSL；halo 这类 reactive 项目的主力形态）
     froutes = scan_functional_routes(classes, by_simple)
     if froutes:
@@ -3123,7 +3518,7 @@ def main():
     # 调用图 + 事务闭包（继承父类 handler 的路由按子类视角补建节点）
     inherited_routes = [(r["controller"], r["handler"]) for r in routes
                         if r.get("handler_owner") and r["handler_owner"] != r["controller"]]
-    graph = build_call_graph(classes, by_simple, impl_of, inherited_routes)
+    graph = build_call_graph(classes, by_simple, impl_of, inherited_routes, feign_registry)
     tx_seeds, tx_inside = tx_closure(graph, by_simple, impl_of)
 
     # 实体 -> 表 -> SQL 联动
@@ -3288,6 +3683,19 @@ def main():
                     continue
                 seen_service.add((ctype, cmethod))
                 visit(ctype, cmethod, depth + 1, seen)
+            elif kind == "feign":
+                # 跨服务：链在这里出了进程边界，先打一行契约，再接着展示
+                # 本仓库里的服务端实现（@RestController implements 该接口）
+                fc = by_simple.get(ctype)
+                reg = fc.get("_feign") if fc else None
+                if reg:
+                    verb, fpath = reg["methods"].get(cmethod, (None, None))
+                    lines.append(
+                        f"{child_prefix}├─ 🌐 Feign 跨服务 → `{reg['service']}` "
+                        f"`{verb or ''} {fpath or '(路径动态/未知)'}`（{ctype}#{cmethod}）")
+                else:
+                    lines.append(f"{child_prefix}├─ 🌐 Feign 跨服务（{ctype}#{cmethod}）")
+                visit(ctype, cmethod, depth + 1, seen)
             else:
                 lines.append(f"{child_prefix}├─ {ctype}#{cmethod}  （组件/工具）")
 
@@ -3298,7 +3706,8 @@ def main():
     out.append(f"- 生成时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     out.append(f"- 扫描类: {len(classes)} 个 | Controller: {len(controllers)} 个 | "
                f"Mapper: {len(mappers)} 个 | 实体: {len(entities)} 个 | "
-               f"HTTP 路由: {len(routes)} 条 | 调用图边: {len(graph)} 个方法")
+               f"HTTP 路由: {len(routes)} 条 | Feign 客户端: {len(feign_registry)} 个 | "
+               f"调用图边: {len(graph)} 个方法")
     out.append("")
     out.append("---")
     out.append("")
@@ -3490,6 +3899,35 @@ def main():
         out.append("（未发现）")
     out.append("")
 
+    # Feign 跨服务契约
+    out.append("---")
+    out.append("")
+    out.append("## 八、Feign 跨服务调用（出进程的边）")
+    out.append("")
+    out.append("> 微服务项目的调用链以前止于本进程。这里列出 @FeignClient 接口：")
+    out.append("> 常量折叠还原真实服务名/路径；本仓库有 @RestController 实现类时，")
+    out.append("> 调用链会继续钻进实现（标注为 feign-contract 路由）；没有实现类则是真·跨仓库调用。")
+    out.append("")
+    if feign_registry:
+        for cli in sorted(feign_registry):
+            reg = feign_registry[cli]
+            impl = reg.get("server_impl")
+            if impl:
+                loc = f"→ 本仓库服务端实现 `{impl}`"
+            elif reg.get("fallback"):
+                loc = (f"→ ⚠️ 服务端不在本仓库（仅有熔断降级类 `{reg['fallback']}`，"
+                       "在调用方本地执行，不当作服务端落点）")
+            else:
+                loc = "→ ⚠️ 目标服务不在本仓库"
+            out.append(f"### `{cli}` → 服务 `{reg['service']}` {loc}")
+            out.append("")
+            for mname, (verb, fpath) in sorted(reg["methods"].items()):
+                out.append(f"- `{verb}` `{fpath or '(路径动态，静态不可知)'}` — `{mname}`")
+            out.append("")
+    else:
+        out.append("（本项目未发现 @FeignClient）")
+        out.append("")
+
     with open(OUT, "w", encoding="utf-8") as f:
         f.write("\n".join(out))
 
@@ -3529,6 +3967,40 @@ def main():
         text = texts.pop() if len(texts) == 1 else "(MP 内置 SELECT，列已按 Wrapper .select() 裁剪)"
         return {"kind": "SELECT", "text": text, "tables": base["tables"],
                 "columns": cols, "mp_builtin": True, "select_pruned": True}
+
+    # Feign 接口名 → 服务端实现类（优先 @RestController，跳过 Fallback 熔断类）
+    feign_impl_of = {reg["server_impl"]: cli for cli, reg in feign_registry.items()
+                     if reg.get("server_impl")}
+    feign_clients_out = []
+    for cli, reg in sorted(feign_registry.items()):
+        feign_clients_out.append({
+            "interface": cli,
+            "service": reg["service"],
+            "class_path": reg["class_path"],
+            "impl": reg.get("server_impl"),
+            "fallback": reg.get("fallback"),
+            "methods": [
+                {"name": mname, "verb": verb, "path": path}
+                for mname, (verb, path) in sorted(reg["methods"].items())
+            ],
+        })
+
+    def _edge_json(cc, cm, edge):
+        k, dc, dm, w = edge
+        rec = {"kind": k, "class": dc, "method": dm, "is_db_write": w}
+        if k == "feign":  # 调用端：补上 HTTP 契约，一眼看出跨的是哪个服务的哪个接口
+            reg = feign_registry.get(dc)
+            if reg:
+                rec["service"] = reg["service"]
+                verb, path = reg["methods"].get(dm, (None, None))
+                rec["http_method"] = verb
+                rec["http_path"] = path
+        elif k == "feign_server":  # 服务端：标记它是被哪个 Feign 接口打进来的
+            cli = feign_impl_of.get(dc)
+            if cli:
+                rec["feign_interface"] = cli
+                rec["service"] = feign_registry[cli]["service"]
+        return rec
 
     data = {
         "meta": {
@@ -3590,10 +4062,12 @@ def main():
             for e in sorted(entities, key=lambda x: x["name"])
         ],
         "call_graph": {
-            f"{cc}#{cm}": [{"kind": k, "class": dc, "method": dm, "is_db_write": w}
-                           for k, dc, dm, w in callees]
+            f"{cc}#{cm}": [_edge_json(cc, cm, edge) for edge in callees]
             for (cc, cm), callees in sorted(graph.items())
         },
+        # Feign 跨服务契约：服务名 + HTTP 方法清单；本仓库有实现类时 impl 非空，
+        # 否则说明目标服务不在当前代码树里（边只到调用端，诚实标缺失）
+        "feign_clients": feign_clients_out,
         "transactional": {
             "seeds": sorted(f"{c}#{m}" for c, m in tx_seeds),
             "inside_closure": sorted(f"{c}#{m}" for c, m in tx_inside),

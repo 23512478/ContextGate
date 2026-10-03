@@ -1,8 +1,8 @@
 # 框架调用链地图（阶段0 增强版）
 
 - 项目: `demo-project`
-- 生成时间: 2026-10-02 20:28:49
-- 扫描类: 39 个 | Controller: 6 个 | Mapper: 7 个 | 实体: 6 个 | HTTP 路由: 53 条 | 调用图边: 91 个方法
+- 生成时间: 2026-10-03 15:36:50
+- 扫描类: 44 个 | Controller: 8 个 | Mapper: 7 个 | 实体: 6 个 | HTTP 路由: 55 条 | Feign 客户端: 1 个 | 调用图边: 94 个方法
 
 ---
 
@@ -42,6 +42,12 @@
 **CommentController#update**
    ├─ CommentMapper#updateContent  → @UPDATE 自定义SQL ✍️写
    │     `UPDATE comments content = #{content} WHERE id = #{id}`
+
+### `GET /api/v1/feign/user`
+**FeignDemoController#remoteUser**
+   ├─ 🌐 Feign 跨服务 → `demo-server` `GET /rpc-api/demo/user/get`（RemoteUserApi#getUser）
+   └─ RemoteUserApiImpl#getUser
+      ├─ UserMapper#selectById  （MP 内置）
 
 ### `POST /api/v1/orders`
 **OrderController#create**
@@ -234,6 +240,10 @@
 ### `GET /api/v1/wallet/sel-prune`
 **WalletController#selPrune**
    ├─ UserMapper#selectList  （MP 内置）
+
+### `GET /rpc-api/demo/user/get`
+**RemoteUserApiImpl#getUser**
+   ├─ UserMapper#selectById  （MP 内置）
 
 ### `POST /widget/add`
 **WidgetController#add**
@@ -578,3 +588,15 @@ UserMapper#selectById
   - `SELECT * FROM users WHERE (nickname = ?) AND (create_time > ?)`
   - 涉及表: `users`
   - 上游路由: `GET /api/v1/wallet/example-relay`
+
+---
+
+## 八、Feign 跨服务调用（出进程的边）
+
+> 微服务项目的调用链以前止于本进程。这里列出 @FeignClient 接口：
+> 常量折叠还原真实服务名/路径；本仓库有 @RestController 实现类时，
+> 调用链会继续钻进实现（标注为 feign-contract 路由）；没有实现类则是真·跨仓库调用。
+
+### `RemoteUserApi` → 服务 `demo-server` → 本仓库服务端实现 `RemoteUserApiImpl`
+
+- `GET` `/rpc-api/demo/user/get` — `getUser`

@@ -1,12 +1,12 @@
 {
   "meta": {
     "project": "demo-project",
-    "generated_at": "2026-10-02T20:28:49",
-    "classes": 39,
-    "controllers": 6,
+    "generated_at": "2026-10-03T15:36:50",
+    "classes": 44,
+    "controllers": 8,
     "mappers": 7,
     "entities": 6,
-    "routes": 53
+    "routes": 55
   },
   "routes": [
     {
@@ -57,6 +57,13 @@
       "controller": "CommentController",
       "handler": "update",
       "handler_owner": "CommentController"
+    },
+    {
+      "method": "GET",
+      "path": "/api/v1/feign/user",
+      "controller": "FeignDemoController",
+      "handler": "remoteUser",
+      "handler_owner": "FeignDemoController"
     },
     {
       "method": "POST",
@@ -351,6 +358,14 @@
       "controller": "WalletController",
       "handler": "selPrune",
       "handler_owner": "WalletController"
+    },
+    {
+      "method": "GET",
+      "path": "/rpc-api/demo/user/get",
+      "controller": "RemoteUserApiImpl",
+      "handler": "getUser",
+      "handler_owner": "RemoteUserApiImpl",
+      "via": "feign-contract"
     },
     {
       "method": "POST",
@@ -1057,10 +1072,15 @@
             "direct_callers": [
               "OrderQuerySupport#listUsersDirect",
               "OrderServiceImpl#create",
+              "RemoteUserApiImpl#getUser",
               "WalletController#gunsResource",
               "WalletController#me"
             ],
             "routes": [
+              {
+                "method": "GET",
+                "path": "/api/v1/feign/user"
+              },
               {
                 "method": "POST",
                 "path": "/api/v1/orders"
@@ -1116,6 +1136,10 @@
               {
                 "method": "GET",
                 "path": "/api/v1/wallet/obj-field"
+              },
+              {
+                "method": "GET",
+                "path": "/rpc-api/demo/user/get"
               }
             ]
           }
@@ -1426,6 +1450,17 @@
         "is_db_write": false
       }
     ],
+    "FeignDemoController#remoteUser": [
+      {
+        "kind": "feign",
+        "class": "RemoteUserApi",
+        "method": "getUser",
+        "is_db_write": false,
+        "service": "demo-server",
+        "http_method": "GET",
+        "http_path": "/rpc-api/demo/user/get"
+      }
+    ],
     "GenericOrderService#genericGetById": [
       {
         "kind": "mapper",
@@ -1692,6 +1727,24 @@
         "class": "ProductMapper",
         "method": "deductStock",
         "is_db_write": true
+      }
+    ],
+    "RemoteUserApi#getUser": [
+      {
+        "kind": "feign_server",
+        "class": "RemoteUserApiImpl",
+        "method": "getUser",
+        "is_db_write": false,
+        "feign_interface": "RemoteUserApi",
+        "service": "demo-server"
+      }
+    ],
+    "RemoteUserApiImpl#getUser": [
+      {
+        "kind": "mapper",
+        "class": "UserMapper",
+        "method": "selectById",
+        "is_db_write": false
       }
     ],
     "StatsController#openidCount": [
@@ -2133,6 +2186,22 @@
       }
     ]
   },
+  "feign_clients": [
+    {
+      "interface": "RemoteUserApi",
+      "service": "demo-server",
+      "class_path": "",
+      "impl": "RemoteUserApiImpl",
+      "fallback": null,
+      "methods": [
+        {
+          "name": "getUser",
+          "verb": "GET",
+          "path": "/rpc-api/demo/user/get"
+        }
+      ]
+    }
+  ],
   "transactional": {
     "seeds": [
       "OrderServiceImpl#create",

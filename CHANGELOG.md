@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+- **Feign 跨服务调用边（第九轮）**：微服务调用链不再止于本进程——识别 `@FeignClient` 接口，调用点发 `feign` 边（JSON/MD/MCP 带目标服务名 + 折叠后的 HTTP 动词/路径，渲染 🌐 标记），同仓有 `@RestController implements 该接口` 的服务端时再发一跳 `feign_server` 边（🛂 标记）钻进实现类，逆向索引可跨服务反查（Mapper 上游路由同时含本端入口与 `/rpc-api/**` 远程入口）
+  - 接口隐式常量识别：interface 的 `String X = "..."` 不带 `public static final`；先抹注释（常量上常挂 javadoc）再整块抹除 default/static 方法体（`_mask_brace_blocks`，正确跳过字符串/字符字面量），只对类体内部文本处理避免最外层 `{}` 抹掉全类
+  - import 感知的常量归属解析（`_resolve_const_owner`）：import FQN → 同包 → 简单名兜底，修掉 yudao 十几模块各有 `ApiConstants` 同名碰撞（旧逻辑 system 模块常量被 pay 模块覆盖）；所有跨类常量解析点（Feign 折叠/全局折叠循环/Wrapper `_const_ref`）统一切换
+  - 三层常量链不动点折叠（`fold_str_expr`）：`RpcConstants.RPC_API_PREFIX` → `ApiConstants.PREFIX` → `XxxApi.PREFIX` + `@GetMapping(PREFIX+"/get")`，真实还原 `/rpc-api/system/dept/get`；修字符级 join 空格 bug；SQL 语义折叠在 `+` 处插空格，URL 出口用 `\s*/\s*` 归一；遇方法调用/`${}`/三元返回 None，边保留路径显原文，不瞎编
+  - 服务端接口契约路由：mapping 全在接口、impl 只有 `@Override` 也收（沿接口多继承 extends BFS，子接口覆盖父接口；只继承方法级 mapping 不继承接口类级 `@RequestMapping`；护栏：impl 未实现的方法不收、impl 自有 mapping 优先），路由带 `via: feign-contract/interface-contract`
+  - 服务端落点选择：`@RestController` 实现 > 非 Fallback 普通类 > dangling；Fallback 熔断类是调用方本地降级不当落点（名单独展示）；事务闭包不跨 HTTP 边界（feign/feign_server 边跳过）
+  - 输出：JSON 顶层新增 `feign_clients`（服务名/类前缀/服务端实现/降级类/方法契约），call_graph 边带 service/http_method/http_path 元数据；MD 新增「八、Feign 跨服务调用」章节与头部统计、树形链 🌐 标记；MCP trace_call 渲染 🌐/🛂
+  - 路由去重键修正为 `(动词,路径,控制器,handler)`：旧 `(动词,路径)` 会误杀 yudao admin/app 双端同路径的 58 个真实入口（精确核对 0 条真重复）
+  - yudao-cloud 2999→3114 路由（+115 `/rpc-api/**`，47 个 Feign 客户端/44 仓内有实现），12 个非微服务回归项目零变化；demo 新增 Feign 夹具（RpcConstants/DemoApiConstants/RemoteUserApi/RemoteUserApiImpl/FeignDemoController），基线 53→55 路由，新增断言 7.53
+
 - **元注解组合 Controller 识别**：上轮自研组合路由注解只覆盖 Guns 一家（方法级 AliasFor 形态）→ 新增 `scan_meta_annotations` 扫项目内 `@interface` 定义上的元注解（闭包折叠多层），元注解含 `@RestController`/`@Controller` 的自定义注解标在类上即认作 Controller，含 `@RequestMapping` 的其显式 `path`/`value` 作类前缀（只认显式属性，绝不取第一个字符串——cool `api={"add"}` 会被误当路径）；jetlinks/lamp 的 `@RestController`/`@ApiRestController` 类注解形态全部收编
 - **继承父类 handler（空类 CRUD 子类）**：子类一个 mapping 方法都不写、CRUD 全在泛型基类（cool-admin `BaseController<S,T>`）旧版零路由 → 沿 extends 继承链收集父类 `@*Mapping` 方法（子类 override 同名不重复），路由节点按**子类视角**建（`WidgetController#add` 而非基类），方法体在父类但泛型实参 S/T 绑在子类，`service.save()` 据此接到子类钉死的 ServiceImpl → Mapper；路由记录新增 `handler_owner`
 - **cool-admin 约定前缀推导**：`@CoolRestController` 不写路径时按 `AutoPrefixUrlMapping` 规则从包名/类名推导（modules 之后去 `.controller`、前两段互换、类名剥 Controller 后缀及已含驼峰词），如 `com.cool.modules.space.controller.admin.AdminSpaceTypeController` → `/admin/space/type`；基类 CRUD 按 `api={...}` 白名单过滤，未声明的方法（如未列 list）不生成路由
